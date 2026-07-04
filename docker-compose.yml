@@ -1,0 +1,15 @@
+services:
+  tcca:
+    build: .
+    container_name: tcca
+    restart: unless-stopped
+    ports:
+      - "8084:3000"
+    environment:
+      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_DB: ${MONGODB_DB:-tcca}
+      AI_API_BASE_URL: ${AI_API_BASE_URL}
+      AI_API_KEY: ${AI_API_KEY}
+      AI_MODEL: ${AI_MODEL}
+      FX_API_BASE_URL: ${FX_API_BASE_URL:-https://open.er-api.com/v6/latest}
+      FX_API_KEY: ${FX_API_KEY:-}
