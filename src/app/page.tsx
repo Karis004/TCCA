@@ -7,6 +7,7 @@ import type { Category, ParsedTransaction, PaymentMethod, Transaction, Transacti
 import { categories as defaultCategories, paymentMethods as defaultPaymentMethods } from "@/presets/ledger";
 
 type Tab = "entry" | "analytics" | "records" | "settings";
+type DailyFlowMode = "expense" | "income" | "all";
 
 type Analytics = {
   totalIncomeCny: number;
@@ -29,6 +30,10 @@ type Draft = ParsedTransaction & {
   originalText?: string;
 };
 
+type EditingDraft = Draft & {
+  _id: string;
+};
+
 const tabs: { key: Tab; label: string }[] = [
   { key: "entry", label: "记账" },
   { key: "analytics", label: "分析" },
@@ -42,6 +47,56 @@ function money(value = 0) {
 
 function makeId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function getDraftsFromParseResponse(data: unknown) {
+  if (!data || typeof data !== "object") return [];
+
+  if (Array.isArray(data)) {
+    return data as Draft[];
+  }
+
+  const maybeData = data as { transactions?: unknown };
+  if (Array.isArray(maybeData.transactions)) {
+    return maybeData.transactions as Draft[];
+  }
+
+  return [data as Draft];
+}
+
+function draftToPayload(draft: Draft): Omit<TransactionInput, "amountCny" | "fxRateToCny"> {
+  return {
+    type: draft.type,
+    amount: Number(draft.amount || 0),
+    currency: (draft.currency || "CNY").toUpperCase(),
+    date: draft.date || new Date().toISOString().slice(0, 10),
+    category: draft.category?.trim() || "未分类",
+    paymentMethod: draft.paymentMethod?.trim() || "未指定",
+    merchant: draft.merchant,
+    tags: draft.tags || [],
+    note: draft.note,
+    originalText: draft.originalText || null
+  };
+}
+
+function transactionToDraft(transaction: Transaction): EditingDraft {
+  return {
+    _id: transaction._id,
+    type: transaction.type,
+    amount: transaction.amount,
+    currency: transaction.currency,
+    date: transaction.date,
+    category: transaction.category,
+    paymentMethod: transaction.paymentMethod,
+    merchant: transaction.merchant || null,
+    tags: transaction.tags || [],
+    note: transaction.note || null,
+    confidence: 1,
+    needsReview: true,
+    amountCny: transaction.amountCny,
+    fxRateToCny: transaction.fxRateToCny,
+    originalText: transaction.originalText || undefined
+  };
 }
 
 function readStoredLists() {
@@ -74,7 +129,8 @@ function readStoredLists() {
 export default function HomePage() {
   const [tab, setTab] = useState<Tab>("entry");
   const [text, setText] = useState("");
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [drafts, setDrafts] = useState<Draft[]>([]);
+  const [editingDraft, setEditingDraft] = useState<EditingDraft | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [categories, setCategories] = useState<Category[]>(defaultCategories);
@@ -82,6 +138,7 @@ export default function HomePage() {
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newPaymentMethodName, setNewPaymentMethodName] = useState("");
   const [selectedMonth, setSelectedMonth] = useState("");
+  const [dailyFlowMode, setDailyFlowMode] = useState<DailyFlowMode>("expense");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -154,7 +211,7 @@ export default function HomePage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "识别失败。");
-      setDraft(data);
+      setDrafts(getDraftsFromParseResponse(data));
     } catch (err) {
       setError(err instanceof Error ? err.message : "识别失败。");
     } finally {
@@ -162,21 +219,48 @@ export default function HomePage() {
     }
   }
 
-  async function saveTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">) {
+  function startManualEntry() {
+    setError("");
+    setMessage("");
+    setDrafts([{
+      type: "expense",
+      amount: null,
+      currency: "CNY",
+      date: new Date().toISOString().slice(0, 10),
+      category: null,
+      paymentMethod: null,
+      merchant: null,
+      tags: [],
+      note: null,
+      confidence: 1,
+      needsReview: true
+    }]);
+  }
+
+  async function createTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">) {
+    const response = await fetch("/api/transactions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "保存失败。");
+    return data;
+  }
+
+  async function saveTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draftIndex?: number) {
     setSaving(true);
     setError("");
     setMessage("");
 
     try {
-      const response = await fetch("/api/transactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "保存失败。");
-      setDraft(null);
-      setText("");
+      await createTransaction(payload);
+      if (typeof draftIndex === "number") {
+        setDrafts((current) => current.filter((_, index) => index !== draftIndex));
+      } else {
+        setDrafts([]);
+        setText("");
+      }
       setMessage("账单已录入。");
       await refresh();
     } catch (err) {
@@ -186,9 +270,77 @@ export default function HomePage() {
     }
   }
 
+  async function saveAllDrafts() {
+    if (!drafts.length) return;
+    if (drafts.some((item) => !Number(item.amount || 0))) {
+      setError("请先补全每一张账单的金额，再一键全部录入。");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      for (const item of drafts) {
+        await createTransaction(draftToPayload(item));
+      }
+      setDrafts([]);
+      setText("");
+      setMessage(`${drafts.length} 张账单已录入。`);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">) {
+    if (!editingDraft) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch(`/api/transactions?id=${editingDraft._id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存失败。");
+
+      setTransactions((current) => current.map((item) => (item._id === data._id ? data : item)));
+      setEditingDraft(null);
+      setMessage("账单已更新。");
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "保存失败。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function deleteTransaction(id: string) {
-    await fetch(`/api/transactions?id=${id}`, { method: "DELETE" });
-    await refresh();
+    const previous = transactions;
+    setTransactions((current) => current.filter((item) => item._id !== id));
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch(`/api/transactions?id=${id}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除失败。");
+      if (editingDraft?._id === id) {
+        setEditingDraft(null);
+      }
+      setMessage("账单已删除。");
+      await refresh();
+    } catch (err) {
+      setTransactions(previous);
+      setError(err instanceof Error ? err.message : "删除失败。");
+    }
   }
 
   async function changeAnalyticsMonth(month: string) {
@@ -250,6 +402,20 @@ export default function HomePage() {
     setMessage("模型列表已恢复为默认值。");
   }
 
+  function updateDraftAt(index: number, nextDraft: Draft | null) {
+    setDrafts((current) => {
+      if (!nextDraft) {
+        return current.filter((_, itemIndex) => itemIndex !== index);
+      }
+
+      return current.map((item, itemIndex) => (itemIndex === index ? nextDraft : item));
+    });
+  }
+
+  function removeDraftAt(index: number) {
+    setDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
+  }
+
   const visibleTransactions = useMemo(() => transactions.slice(0, 80), [transactions]);
   const merchantSuggestions = useMemo(() => {
     const scores = new Map<string, { count: number; recent: number }>();
@@ -294,7 +460,12 @@ export default function HomePage() {
           <section className="command-panel">
             <div className="panel-head">
               <span>AI 识别</span>
-              <span>{text.length} 字</span>
+              <div className="panel-actions">
+                <span>{text.length} 字</span>
+                <button className="text-button" type="button" onClick={startManualEntry}>
+                  手动录入
+                </button>
+              </div>
             </div>
             <textarea
               className="command-input"
@@ -307,21 +478,58 @@ export default function HomePage() {
               <button className="primary-button" disabled={loading || !text.trim()} onClick={parseText}>
                 {loading ? "识别中..." : "识别账单"}
               </button>
-              <button className="ghost-button" onClick={() => setText("")}>
-                清空
-              </button>
             </div>
           </section>
 
-          <TransactionEditor
-            draft={draft}
-            categories={categories}
-            paymentMethods={paymentMethods}
-            merchantSuggestions={merchantSuggestions}
-            onChange={setDraft}
-            onSave={saveTransaction}
-            saving={saving}
-          />
+          {drafts.length > 1 ? (
+            <section className="multi-draft-area">
+              <div className="panel multi-draft-toolbar">
+                <div>
+                  <strong>{drafts.length} 张待确认账单</strong>
+                  <p className="hint">左右滑动检查，每张都可以单独修改或录入。</p>
+                </div>
+              </div>
+              <div className="draft-carousel" aria-label="多账单待确认列表">
+                {drafts.map((item, index) => (
+                  <div className="draft-slide" key={`${item.originalText || "draft"}-${index}`}>
+                    <div className="draft-slide-meta">
+                      <span>
+                        {index + 1} / {drafts.length}
+                      </span>
+                      <button className="text-button" type="button" onClick={() => removeDraftAt(index)}>
+                        删除这张
+                      </button>
+                    </div>
+                    <TransactionEditor
+                      draft={item}
+                      categories={categories}
+                      paymentMethods={paymentMethods}
+                      merchantSuggestions={merchantSuggestions}
+                      onChange={(nextDraft) => updateDraftAt(index, nextDraft)}
+                      onSave={(payload) => saveTransaction(payload, index)}
+                      saving={saving}
+                      idSuffix={`draft-${index}`}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="panel multi-draft-actions">
+                <button className="primary-button" disabled={saving || drafts.some((item) => !Number(item.amount || 0))} onClick={saveAllDrafts}>
+                  {saving ? "录入中..." : "全部录入"}
+                </button>
+              </div>
+            </section>
+          ) : (
+            <TransactionEditor
+              draft={drafts[0] || null}
+              categories={categories}
+              paymentMethods={paymentMethods}
+              merchantSuggestions={merchantSuggestions}
+              onChange={(nextDraft) => setDrafts(nextDraft ? [nextDraft] : [])}
+              onSave={(payload) => saveTransaction(payload)}
+              saving={saving}
+            />
+          )}
         </div>
       ) : null}
 
@@ -345,13 +553,26 @@ export default function HomePage() {
           <section className="panel chart-panel wide">
             <div className="panel-head">
               <span>每日流水</span>
-              <select className="compact-select" value={analytics.selectedMonth} onChange={(event) => changeAnalyticsMonth(event.target.value)}>
-                {analytics.months.map((month) => (
-                  <option key={month} value={month}>
-                    {month}
-                  </option>
-                ))}
-              </select>
+              <div className="chart-controls">
+                <select className="compact-select" value={analytics.selectedMonth} onChange={(event) => changeAnalyticsMonth(event.target.value)}>
+                  {analytics.months.map((month) => (
+                    <option key={month} value={month}>
+                      {month}
+                    </option>
+                  ))}
+                </select>
+                <div className="segmented-control" aria-label="每日流水显示范围">
+                  <button className={dailyFlowMode === "expense" ? "active" : ""} type="button" onClick={() => setDailyFlowMode("expense")}>
+                    支出
+                  </button>
+                  <button className={dailyFlowMode === "income" ? "active" : ""} type="button" onClick={() => setDailyFlowMode("income")}>
+                    收入
+                  </button>
+                  <button className={dailyFlowMode === "all" ? "active" : ""} type="button" onClick={() => setDailyFlowMode("all")}>
+                    全部
+                  </button>
+                </div>
+              </div>
             </div>
             <div className="chart">
               <ResponsiveContainer>
@@ -360,8 +581,10 @@ export default function HomePage() {
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip />
-                  <Line type="monotone" dataKey="expense" name="支出" stroke="#d7422f" strokeWidth={2} dot={false} />
-                  {analytics.hasDailyIncome ? <Line type="monotone" dataKey="income" name="收入" stroke="#0b7f49" strokeWidth={2} dot={false} /> : null}
+                  {dailyFlowMode !== "income" ? <Line type="monotone" dataKey="expense" name="支出" stroke="#d7422f" strokeWidth={2} dot={false} /> : null}
+                  {dailyFlowMode === "income" || (dailyFlowMode === "all" && analytics.hasDailyIncome) ? (
+                    <Line type="monotone" dataKey="income" name="收入" stroke="#0b7f49" strokeWidth={2} dot={false} />
+                  ) : null}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -426,14 +649,25 @@ export default function HomePage() {
           <div className="record-list">
             {visibleTransactions.map((item) => (
               <article className="record-card" key={item._id}>
-                <div>
-                  <h3>{item.category}</h3>
+                <div className="record-main">
+                  <div className="record-title-row">
+                    <h3>{item.category}</h3>
+                    {item.merchant ? <span>{item.merchant}</span> : null}
+                  </div>
                   <p>
                     {item.date} · {item.paymentMethod} · {item.currency} {item.amount}
                   </p>
                   {item.note ? <p>{item.note}</p> : null}
                 </div>
                 <div className="record-side">
+                  <div className="record-actions">
+                    <button className="text-button" onClick={() => setEditingDraft(transactionToDraft(item))}>
+                      编辑
+                    </button>
+                    <button className="text-button danger-text" onClick={() => deleteTransaction(item._id)}>
+                      删除
+                    </button>
+                  </div>
                   <strong className={item.type === "expense" ? "negative" : "positive"}>
                     {item.type === "expense" ? "-" : "+"}
                     {money(item.amountCny)}
@@ -504,6 +738,32 @@ export default function HomePage() {
             </div>
           </details>
         </section>
+      ) : null}
+
+      {editingDraft ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="编辑账单">
+          <div className="modal-panel">
+            <div className="modal-head">
+              <strong>编辑账单</strong>
+              <button className="text-button" onClick={() => setEditingDraft(null)}>
+                关闭
+              </button>
+            </div>
+            <TransactionEditor
+              draft={editingDraft}
+              categories={categories}
+              paymentMethods={paymentMethods}
+              merchantSuggestions={merchantSuggestions}
+              onChange={(nextDraft) => setEditingDraft(nextDraft ? { ...nextDraft, _id: editingDraft._id } : null)}
+              onSave={updateTransaction}
+              saving={saving}
+              idSuffix={`edit-${editingDraft._id}`}
+              title="账单内容"
+              meta="Edit"
+              saveLabel="保存修改"
+            />
+          </div>
+        </div>
       ) : null}
 
       <footer className="footer">

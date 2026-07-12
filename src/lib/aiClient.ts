@@ -1,3 +1,6 @@
+import dns from "node:dns";
+import http from "node:http";
+import https from "node:https";
 import { z } from "zod";
 import { buildLedgerPrompt } from "@/lib/aiPrompt";
 
@@ -30,6 +33,22 @@ const parsedSchema = z.object({
   needsReview: z.boolean().default(true)
 });
 
+function lookupIpv4First(hostname: string, options: any, callback: any) {
+  dns.resolve4(hostname, (error, addresses) => {
+    if (!error && addresses.length) {
+      if (options?.all) {
+        callback(null, addresses.map((address) => ({ address, family: 4 })));
+        return;
+      }
+
+      callback(null, addresses[0], 4);
+      return;
+    }
+
+    dns.lookup(hostname, options, callback);
+  });
+}
+
 function getChatCompletionsUrl(apiBaseUrl: string) {
   const base = apiBaseUrl.trim().replace(/\/$/, "");
 
@@ -47,6 +66,16 @@ function getChatCompletionsUrl(apiBaseUrl: string) {
 function looksLikeHtml(text: string) {
   const head = text.trim().slice(0, 120).toLowerCase();
   return head.startsWith("<!doctype html") || head.startsWith("<html") || head.includes("<title>new api</title>");
+}
+
+function describeNetworkError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "unknown network error";
+  }
+
+  const code = (error as Error & { code?: string }).code;
+  const address = (error as Error & { address?: string }).address;
+  return [error.message, code, address].filter(Boolean).join(" / ");
 }
 
 function describeBadAiResponse(status: number, body: string) {
@@ -92,13 +121,19 @@ function parseAssistantJson(content: string) {
     .trim();
 
   const raw = JSON.parse(withoutFence);
-  const candidate = Array.isArray(raw) ? raw[0] : raw;
+  const candidates = Array.isArray(raw) ? raw : raw.transactions || raw.items || raw.data || [raw];
 
-  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-    throw new Error("AI returned an invalid ledger object.");
+  if (!Array.isArray(candidates) || !candidates.length) {
+    throw new Error("AI returned no ledger transactions.");
   }
 
-  return parsedSchema.parse(candidate);
+  return candidates.map((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+      throw new Error("AI returned an invalid ledger object.");
+    }
+
+    return parsedSchema.parse(candidate);
+  });
 }
 
 export async function parseLedgerText(input: string, options: ParseOptions = {}) {
@@ -141,22 +176,15 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
 }
 
 async function requestAndParseAi(url: string, apiKey: string, requestBody: string) {
-  let response: Response;
+  let response: { ok: boolean; status: number; text: string };
 
   try {
-    response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: requestBody
-    });
+    response = await postText(url, apiKey, requestBody);
   } catch (error) {
-    throw new AiRequestError(error instanceof Error ? `AI API 网络错误: ${error.message}` : "AI API 网络错误。", true);
+    throw new AiRequestError(`AI API 网络错误: ${describeNetworkError(error)}`, true);
   }
 
-  const responseText = await response.text();
+  const responseText = response.text;
 
   if (!response.ok) {
     const error = describeBadAiResponse(response.status, responseText);
@@ -182,6 +210,52 @@ async function requestAndParseAi(url: string, apiKey: string, requestBody: strin
   }
 
   return parseAssistantJson(content);
+}
+
+function postText(url: string, apiKey: string, requestBody: string) {
+  return new Promise<{ ok: boolean; status: number; text: string }>((resolve, reject) => {
+    const target = new URL(url);
+    const transport = target.protocol === "http:" ? http : https;
+    const request = transport.request(
+      {
+        protocol: target.protocol,
+        hostname: target.hostname,
+        port: target.port,
+        path: `${target.pathname}${target.search}`,
+        method: "POST",
+        lookup: lookupIpv4First,
+        timeout: 30000,
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(requestBody),
+          Authorization: `Bearer ${apiKey}`
+        }
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+
+        response.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+
+        response.on("end", () => {
+          const status = response.statusCode || 0;
+          resolve({
+            ok: status >= 200 && status < 300,
+            status,
+            text: Buffer.concat(chunks).toString("utf8")
+          });
+        });
+      }
+    );
+
+    request.on("timeout", () => {
+      request.destroy(new Error("request timed out"));
+    });
+    request.on("error", reject);
+    request.write(requestBody);
+    request.end();
+  });
 }
 
 function delay(ms: number) {

@@ -21,19 +21,26 @@ export async function POST(request: Request) {
       categories: body.categories,
       paymentMethods: body.paymentMethods
     });
-    const currency = resolveCurrency(parsed.currency, body.text);
-    const fxRateToCny = await getRateToCny(currency);
-    const amount = parsed.amount || 0;
+    const parseDurationMs = Date.now() - startedAt;
+    const transactions = await Promise.all(
+      parsed.map(async (item) => {
+        const currency = resolveCurrency(item.currency, body.text);
+        const fxRateToCny = await getRateToCny(currency);
+        const amount = item.amount || 0;
 
-    return NextResponse.json({
-      ...parsed,
-      currency,
-      amount,
-      amountCny: Number((amount * fxRateToCny).toFixed(2)),
-      fxRateToCny,
-      parseDurationMs: Date.now() - startedAt,
-      originalText: body.text
-    });
+        return {
+          ...item,
+          currency,
+          amount,
+          amountCny: Number((amount * fxRateToCny).toFixed(2)),
+          fxRateToCny,
+          parseDurationMs,
+          originalText: body.text
+        };
+      })
+    );
+
+    return NextResponse.json({ transactions });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to parse text." },

@@ -168,6 +168,14 @@ a {
   text-transform: uppercase;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
 .draft-total {
   margin: -6px 0 14px;
   font-size: 24px;
@@ -181,15 +189,15 @@ a {
 .command-input {
   width: 100%;
   max-width: 100%;
-  min-height: clamp(180px, 42svh, 320px);
+  min-height: clamp(112px, 22svh, 180px);
   resize: none;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font-size: clamp(24px, 8.6vw, 48px);
+  font-size: clamp(18px, 5.8vw, 28px);
   font-weight: 760;
-  line-height: 1.16;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
@@ -201,6 +209,99 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.multi-draft-area {
+  min-width: 0;
+}
+
+.multi-draft-toolbar {
+  display: grid;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.multi-draft-toolbar strong {
+  display: block;
+  font-size: 15px;
+}
+
+.multi-draft-toolbar .hint {
+  margin: 4px 0 0;
+}
+
+.draft-carousel {
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+  padding-bottom: 6px;
+}
+
+.draft-slide {
+  flex: 0 0 100%;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  scroll-snap-align: start;
+}
+
+.draft-slide-meta {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.multi-draft-actions {
+  margin-top: 10px;
+}
+
+.multi-draft-actions .primary-button {
+  width: 100%;
+}
+
+.chart-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.segmented-control {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 1fr);
+  min-height: 36px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.segmented-control button {
+  min-width: 48px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.segmented-control button:first-child {
+  border-left: 0;
+}
+
+.segmented-control button.active {
+  background: var(--ink);
+  color: white;
 }
 
 .primary-button,
@@ -471,32 +572,117 @@ a {
 
 .record-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) minmax(112px, auto);
+  gap: 12px;
   align-items: center;
   border: 1px solid var(--line);
   background: var(--surface);
-  padding: 14px;
+  padding: 11px 12px;
 }
 
 .record-card h3 {
-  margin: 0 0 5px;
-  font-size: 16px;
+  margin: 0;
+  font-size: 15px;
   overflow-wrap: anywhere;
 }
 
 .record-card p {
-  margin: 0;
+  margin: 4px 0 0;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
 
-.record-side {
-  display: grid;
-  justify-items: end;
+.record-main {
+  min-width: 0;
+}
+
+.record-title-row {
+  display: flex;
+  align-items: baseline;
   gap: 8px;
+  min-width: 0;
+}
+
+.record-title-row span {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.record-side {
+  display: flex;
+  flex-direction: column;
+  justify-items: end;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.record-side strong {
+  order: -1;
+  font-size: 15px;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.record-side > .text-button {
+  display: none;
+}
+
+.record-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.record-actions .text-button {
+  min-height: 28px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(18, 18, 18, 0.24);
+}
+
+.modal-panel {
+  width: min(680px, 100%);
+  max-height: min(760px, calc(100svh - 36px));
+  overflow-y: auto;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+}
+
+.modal-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.modal-head strong {
+  font-size: 15px;
 }
 
 .negative {
@@ -597,8 +783,22 @@ a {
   }
 
   .command-input {
-    font-size: clamp(22px, 8vw, 30px);
-    min-height: 176px;
+    font-size: clamp(18px, 5.8vw, 24px);
+    min-height: 116px;
+  }
+
+  .multi-draft-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .chart-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .chart-controls .compact-select {
+    flex: 1 1 112px;
+    min-width: 0;
   }
 
   .primary-button,
@@ -608,11 +808,11 @@ a {
   }
 
   .record-card {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
   }
 
   .record-side {
-    justify-items: start;
+    align-items: flex-end;
   }
 
   .model-row {

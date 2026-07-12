@@ -61,6 +61,45 @@ export async function POST(request: Request) {
   }
 }
 
+export async function PUT(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id || !ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Invalid id." }, { status: 400 });
+  }
+
+  try {
+    const payload = transactionSchema.parse(await request.json());
+    const currency = normalizeCurrencyCode(payload.currency) || "CNY";
+    const fxRateToCny = await getRateToCny(currency);
+    const now = new Date();
+    const update = {
+      ...payload,
+      currency,
+      amountCny: Number((payload.amount * fxRateToCny).toFixed(2)),
+      fxRateToCny,
+      updatedAt: now
+    };
+
+    const db = await getDb();
+    const _id = new ObjectId(id);
+    const result = await db.collection("transactions").updateOne({ _id }, { $set: update });
+
+    if (!result.matchedCount) {
+      return NextResponse.json({ error: "Transaction not found." }, { status: 404 });
+    }
+
+    const doc = await db.collection("transactions").findOne({ _id });
+    return NextResponse.json(serialize(doc));
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to update transaction." },
+      { status: 400 }
+    );
+  }
+}
+
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");

@@ -1,7 +1,6 @@
 "use client";
 
-import { FormEvent } from "react";
-import { useEffect, useRef } from "react";
+import { FormEvent, useEffect, useRef } from "react";
 import type { Category, ParsedTransaction, PaymentMethod, TransactionInput } from "@/models/ledger";
 import { currencies } from "@/presets/ledger";
 
@@ -20,10 +19,28 @@ type Props = {
   onChange: (draft: DraftTransaction | null) => void;
   onSave: (payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">) => void;
   saving: boolean;
+  idSuffix?: string;
+  title?: string;
+  meta?: string;
+  saveLabel?: string;
 };
 
-export function TransactionEditor({ draft, categories, paymentMethods, merchantSuggestions, onChange, onSave, saving }: Props) {
+export function TransactionEditor({
+  draft,
+  categories,
+  paymentMethods,
+  merchantSuggestions,
+  onChange,
+  onSave,
+  saving,
+  idSuffix = "",
+  title = "待确认账单",
+  meta,
+  saveLabel = "确认录入"
+}: Props) {
   const latestDraftRef = useRef({ draft, onChange });
+  const categoryOptionsId = idSuffix ? `category-options-${idSuffix}` : "category-options";
+  const paymentMethodOptionsId = idSuffix ? `payment-method-options-${idSuffix}` : "payment-method-options";
 
   useEffect(() => {
     latestDraftRef.current = { draft, onChange };
@@ -61,7 +78,7 @@ export function TransactionEditor({ draft, categories, paymentMethods, merchantS
     return (
       <section className="panel">
         <div className="panel-head">
-          <span>待确认账单</span>
+          <span>{title}</span>
           <span>Draft</span>
         </div>
         <p className="hint">AI 识别后，这里会出现一张可编辑账单。</p>
@@ -93,11 +110,11 @@ export function TransactionEditor({ draft, categories, paymentMethods, merchantS
 
   return (
     <section className="panel">
-        <div className="panel-head">
-          <span>待确认账单</span>
-          <span>{draft.parseDurationMs ? `${(draft.parseDurationMs / 1000).toFixed(1)}s` : "Draft"}</span>
-        </div>
-        <div className="draft-total">约 ¥{draft.amountCny?.toFixed(2) || "0.00"}</div>
+      <div className="panel-head">
+        <span>{title}</span>
+        <span>{meta || (draft.parseDurationMs ? `${(draft.parseDurationMs / 1000).toFixed(1)}s` : "Draft")}</span>
+      </div>
+      <div className="draft-total">约 ¥{draft.amountCny?.toFixed(2) || "0.00"}</div>
       <form className="list" onSubmit={submit}>
         <div className="split">
           <div className="field">
@@ -135,8 +152,8 @@ export function TransactionEditor({ draft, categories, paymentMethods, merchantS
         <div className="split">
           <div className="field">
             <label>分类</label>
-            <input className="input" list="category-options" value={draft.category || ""} onChange={(event) => update("category", event.target.value || null)} />
-            <datalist id="category-options">
+            <input className="input" list={categoryOptionsId} value={draft.category || ""} onChange={(event) => update("category", event.target.value || null)} />
+            <datalist id={categoryOptionsId}>
               {categories.map((item) => (
                 <option key={item.id} value={item.name} />
               ))}
@@ -144,8 +161,8 @@ export function TransactionEditor({ draft, categories, paymentMethods, merchantS
           </div>
           <div className="field">
             <label>支付方式</label>
-            <input className="input" list="payment-method-options" value={draft.paymentMethod || ""} onChange={(event) => update("paymentMethod", event.target.value || null)} />
-            <datalist id="payment-method-options">
+            <input className="input" list={paymentMethodOptionsId} value={draft.paymentMethod || ""} onChange={(event) => update("paymentMethod", event.target.value || null)} />
+            <datalist id={paymentMethodOptionsId}>
               {paymentMethods.map((item) => (
                 <option key={item.id} value={item.name} />
               ))}
@@ -174,7 +191,7 @@ export function TransactionEditor({ draft, categories, paymentMethods, merchantS
 
         <p className="hint">按实时汇率折算人民币，当前汇率 {draft.fxRateToCny || 1}</p>
         <button className="button" disabled={saving || !draft.amount}>
-          {saving ? "录入中..." : "确认录入"}
+          {saving ? "处理中..." : saveLabel}
         </button>
       </form>
     </section>
