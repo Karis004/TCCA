@@ -3,6 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "TCCA",
+  applicationName: "TCCA",
   description: "一句话记账。"
 };
 
