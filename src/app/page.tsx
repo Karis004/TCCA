@@ -1,28 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { AnalyticsPanel } from "@/components/AnalyticsPanel";
+import { getCurrentMonth } from "@/lib/analytics";
 import { TransactionEditor } from "@/components/TransactionEditor";
 import type { Category, ParsedTransaction, PaymentMethod, Transaction, TransactionInput } from "@/models/ledger";
 import { categories as defaultCategories, paymentMethods as defaultPaymentMethods } from "@/presets/ledger";
 
 type Tab = "entry" | "analytics" | "records" | "settings";
-type DailyFlowMode = "expense" | "income" | "all";
-
-type Analytics = {
-  totalIncomeCny: number;
-  totalExpenseCny: number;
-  balanceCny: number;
-  byCategory: { name: string; value: number }[];
-  byPayment: { name: string; value: number }[];
-  byCurrency: { name: string; value: number }[];
-  byMonth: { name: string; value: number }[];
-  months: string[];
-  selectedMonth: string;
-  byDay: { name: string; expense: number; income: number }[];
-  hasDailyIncome: boolean;
-};
-
 type Draft = ParsedTransaction & {
   amountCny?: number;
   fxRateToCny?: number;
@@ -132,30 +117,20 @@ export default function HomePage() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [editingDraft, setEditingDraft] = useState<EditingDraft | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [categories, setCategories] = useState<Category[]>(defaultCategories);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>(defaultPaymentMethods);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newPaymentMethodName, setNewPaymentMethodName] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState("");
-  const [dailyFlowMode, setDailyFlowMode] = useState<DailyFlowMode>("expense");
+  const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  async function refresh(month = selectedMonth) {
-    const analyticsUrl = month ? `/api/analytics?month=${encodeURIComponent(month)}` : "/api/analytics";
-    const [recordsResponse, analyticsResponse] = await Promise.all([fetch("/api/transactions"), fetch(analyticsUrl)]);
-    if (!recordsResponse.ok || !analyticsResponse.ok) {
-      throw new Error("读取数据失败，请检查 MongoDB 配置。");
-    }
-    setTransactions(await recordsResponse.json());
-    const nextAnalytics = await analyticsResponse.json();
-    setAnalytics(nextAnalytics);
-    if (!month && nextAnalytics.selectedMonth) {
-      setSelectedMonth(nextAnalytics.selectedMonth);
-    }
+  async function refresh() {
+    const response = await fetch("/api/transactions");
+    if (!response.ok) throw new Error("读取数据失败，请检查 MongoDB 配置。");
+    setTransactions(await response.json());
   }
 
   useEffect(() => {
@@ -167,16 +142,9 @@ export default function HomePage() {
 
     (async () => {
       try {
-        const [recordsResponse, analyticsResponse] = await Promise.all([fetch("/api/transactions"), fetch("/api/analytics")]);
-        if (!recordsResponse.ok || !analyticsResponse.ok) {
-          throw new Error("读取数据失败，请检查 MongoDB 配置。");
-        }
-        setTransactions(await recordsResponse.json());
-        const nextAnalytics = await analyticsResponse.json();
-        setAnalytics(nextAnalytics);
-        if (nextAnalytics.selectedMonth) {
-          setSelectedMonth(nextAnalytics.selectedMonth);
-        }
+        const response = await fetch("/api/transactions");
+        if (!response.ok) throw new Error("读取数据失败，请检查 MongoDB 配置。");
+        setTransactions(await response.json());
       } catch (err) {
         setError(err instanceof Error ? err.message : "读取数据失败。");
       }
@@ -341,11 +309,6 @@ export default function HomePage() {
       setTransactions(previous);
       setError(err instanceof Error ? err.message : "删除失败。");
     }
-  }
-
-  async function changeAnalyticsMonth(month: string) {
-    setSelectedMonth(month);
-    await refresh(month);
   }
 
   function updateCategory(id: string, name: string) {
@@ -533,112 +496,7 @@ export default function HomePage() {
         </div>
       ) : null}
 
-      {tab === "analytics" && analytics ? (
-        <div className="analytics-grid">
-          <section className="metric-board">
-            <div className="metric-card">
-              <span>收入</span>
-              <strong>{money(analytics.totalIncomeCny)}</strong>
-            </div>
-            <div className="metric-card">
-              <span>支出</span>
-              <strong>{money(analytics.totalExpenseCny)}</strong>
-            </div>
-            <div className="metric-card dark">
-              <span>结余</span>
-              <strong>{money(analytics.balanceCny)}</strong>
-            </div>
-          </section>
-
-          <section className="panel chart-panel wide">
-            <div className="panel-head">
-              <span>每日流水</span>
-              <div className="chart-controls">
-                <select className="compact-select" value={analytics.selectedMonth} onChange={(event) => changeAnalyticsMonth(event.target.value)}>
-                  {analytics.months.map((month) => (
-                    <option key={month} value={month}>
-                      {month}
-                    </option>
-                  ))}
-                </select>
-                <div className="segmented-control" aria-label="每日流水显示范围">
-                  <button className={dailyFlowMode === "expense" ? "active" : ""} type="button" onClick={() => setDailyFlowMode("expense")}>
-                    支出
-                  </button>
-                  <button className={dailyFlowMode === "income" ? "active" : ""} type="button" onClick={() => setDailyFlowMode("income")}>
-                    收入
-                  </button>
-                  <button className={dailyFlowMode === "all" ? "active" : ""} type="button" onClick={() => setDailyFlowMode("all")}>
-                    全部
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="chart">
-              <ResponsiveContainer>
-                <LineChart data={analytics.byDay}>
-                  <CartesianGrid stroke="#e8e8e4" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  {dailyFlowMode !== "income" ? <Line type="monotone" dataKey="expense" name="支出" stroke="#d7422f" strokeWidth={2} dot={false} /> : null}
-                  {dailyFlowMode === "income" || (dailyFlowMode === "all" && analytics.hasDailyIncome) ? (
-                    <Line type="monotone" dataKey="income" name="收入" stroke="#0b7f49" strokeWidth={2} dot={false} />
-                  ) : null}
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <section className="panel chart-panel wide">
-            <div className="panel-head">
-              <span>月度净流向</span>
-              <span>CNY</span>
-            </div>
-            <div className="chart">
-              <ResponsiveContainer>
-                <BarChart data={analytics.byMonth}>
-                  <CartesianGrid stroke="#e8e8e4" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="value" fill="#121212" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <section className="panel chart-panel">
-            <div className="panel-head">
-              <span>分类支出</span>
-              <span>Top</span>
-            </div>
-            <div className="chart">
-              <ResponsiveContainer>
-                <PieChart>
-                  <Pie data={analytics.byCategory} dataKey="value" nameKey="name" outerRadius={82} fill="#121212" label />
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </section>
-
-          <section className="panel">
-            <div className="panel-head">
-              <span>货币对比</span>
-              <span>原币</span>
-            </div>
-            <div className="stack-list">
-              {analytics.byCurrency.map((item) => (
-                <div className="list-row" key={item.name}>
-                  <span>{item.name}</span>
-                  <strong>{item.value.toFixed(2)}</strong>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-      ) : null}
+      {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} /> : null}
 
       {tab === "records" ? (
         <section className="panel">

@@ -72,11 +72,13 @@ FX_API_KEY=你的汇率_API_KEY
 
 分析页提供：
 
-- 收入、支出、结余
-- 每日流水折线图
-- 月度净流向
-- 分类支出
-- 货币对比
+- 页面顶部统一选择时间，默认当前月，也可选择任意月份或全部时间
+- 所选期间的收入、支出、结余、每日流水和分类支出；无记录月份显示零
+- 月度净流向始终展示全部月份，未记录月份按零显示，不受顶部筛选影响
+- 分类支出环图，以及对应分类的金额和占比
+- 折叠的原币金额汇总
+
+结余表示所选期间的收入减支出，不代表实际账户余额。收入包含退款，转账不计入收入、支出和月度净流向。当前月按香港时区确定。
 
 设置页可以编辑：
 
@@ -129,6 +131,12 @@ pnpm dev
 pnpm build
 ```
 
+分析统计测试（已在 Node.js 22.12 验证）：
+
+```bash
+pnpm test:analytics
+```
+
 ## 项目结构
 
 ```text
@@ -144,12 +152,14 @@ src/
 
   components/
     TransactionEditor.tsx    待确认账单编辑器
+    AnalyticsPanel.tsx       分析页筛选与响应式图表
 
   lib/
     aiClient.ts              OpenAI 兼容接口调用、错误重试
     aiPrompt.ts              AI 解析 Prompt
     currency.ts              币种识别和标准化
     fx.ts                    汇率接口
+    analytics.ts             时间范围与收支统计
     mongodb.ts               MongoDB 连接
 
   models/
@@ -179,7 +189,7 @@ src/
 
 `GET /api/analytics?month=YYYY-MM`
 
-返回分析数据，包括月度、每日、分类、支付方式、币种对比。
+返回所选月份的收支、每日流水、分类、支付方式和原币汇总；不传月份时默认当前月，`month=all` 表示全部时间。月度净流向始终使用全部记录。
 
 `GET /api/fx?currency=HKD`
 
