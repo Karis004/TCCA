@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     const parseDurationMs = Date.now() - startedAt;
     const transactions = await Promise.all(
       parsed.map(async (item) => {
-        const currency = resolveCurrency(item.currency, body.text);
+        const currency = resolveCurrency(item.currency, body.text, parsed.length > 1);
         const fxRateToCny = await getRateToCny(currency);
         const amount = item.amount || 0;
 

@@ -1,19 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { getCurrentMonth } from "@/lib/analytics";
+import type { AnalyticsDisplayCurrency } from "@/lib/analytics";
 import { TransactionEditor } from "@/components/TransactionEditor";
-import type { Category, ParsedTransaction, PaymentMethod, Transaction, TransactionInput } from "@/models/ledger";
+import { TransactionPresetList } from "@/components/TransactionPresetList";
+import { ledgerToday, presetToDraft, suggestPresetName } from "@/lib/transactionPresets";
+import type { Category, TransactionDraft as Draft, PaymentMethod, Transaction, TransactionInput, TransactionPreset } from "@/models/ledger";
 import { categories as defaultCategories, paymentMethods as defaultPaymentMethods } from "@/presets/ledger";
 
 type Tab = "entry" | "analytics" | "records" | "settings";
-type Draft = ParsedTransaction & {
-  amountCny?: number;
-  fxRateToCny?: number;
-  parseDurationMs?: number;
-  originalText?: string;
-};
+type PresetForm = { id?: string; name: string; draft: Draft };
 
 type EditingDraft = Draft & {
   _id: string;
@@ -53,7 +51,7 @@ function draftToPayload(draft: Draft): Omit<TransactionInput, "amountCny" | "fxR
   return {
     type: draft.type,
     amount: Number(draft.amount || 0),
-    currency: (draft.currency || "CNY").toUpperCase(),
+    currency: (draft.currency || "HKD").toUpperCase(),
     date: draft.date || new Date().toISOString().slice(0, 10),
     category: draft.category?.trim() || "未分类",
     paymentMethod: draft.paymentMethod?.trim() || "未指定",
@@ -117,11 +115,22 @@ export default function HomePage() {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [editingDraft, setEditingDraft] = useState<EditingDraft | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactionPresets, setTransactionPresets] = useState<TransactionPreset[]>([]);
+  const [presetsLoading, setPresetsLoading] = useState(true);
+  const [presetError, setPresetError] = useState("");
+  const [presetForm, setPresetForm] = useState<PresetForm | null>(null);
+  const [presetFormError, setPresetFormError] = useState("");
+  const [presetSaving, setPresetSaving] = useState(false);
+  const [deletingPresetId, setDeletingPresetId] = useState<string | null>(null);
+  const [draftRevision, setDraftRevision] = useState(0);
+  const draftAreaRef = useRef<HTMLDivElement>(null);
+  const carouselRef = useRef<HTMLDivElement>(null);
   const [categories, setCategories] = useState<Category[]>(defaultCategories);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>(defaultPaymentMethods);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newPaymentMethodName, setNewPaymentMethodName] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth);
+  const [analysisCurrency, setAnalysisCurrency] = useState<AnalyticsDisplayCurrency>("HKD");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -150,6 +159,84 @@ export default function HomePage() {
       }
     })();
   }, []);
+
+  const loadTransactionPresets = useCallback(async () => {
+    setPresetsLoading(true);
+    setPresetError("");
+    try {
+      const response = await fetch("/api/transaction-presets");
+      if (!response.ok) throw new Error("读取账单预设失败，请稍后重试。");
+      setTransactionPresets(await response.json());
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "读取账单预设失败。");
+    } finally { setPresetsLoading(false); }
+  }, []);
+
+  useEffect(() => { void loadTransactionPresets(); }, [loadTransactionPresets]);
+  useEffect(() => {
+    if (!draftRevision) return;
+    draftAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (carouselRef.current) carouselRef.current.scrollTo({ left: carouselRef.current.scrollWidth, behavior: "smooth" });
+  }, [draftRevision]);
+
+  function openPresetFromDraft(draft: Draft) {
+    setPresetFormError("");
+    setPresetForm({ name: suggestPresetName(draft), draft: { ...draft, tags: [...draft.tags] } });
+  }
+
+  function editPreset(preset: TransactionPreset) {
+    setPresetFormError("");
+    setPresetForm({ id: preset._id, name: preset.name, draft: presetToDraft(preset) });
+  }
+
+  function usePreset(preset: TransactionPreset) {
+    const draft = presetToDraft(preset);
+    setDrafts((current) => {
+      const onlyEmptyDraft = current.length === 1 && !current[0].amount && !current[0].category && !current[0].paymentMethod && !current[0].merchant && !current[0].note;
+      return onlyEmptyDraft ? [draft] : [...current, draft];
+    });
+    setDraftRevision((value) => value + 1);
+    setError("");
+    setMessage(`已载入「${preset.name}」，请确认后录入。`);
+  }
+
+  async function savePreset(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">) {
+    if (!presetForm) return;
+    if (!presetForm.name.trim()) { setPresetFormError("请填写预设名称。"); return; }
+    setPresetSaving(true);
+    setPresetFormError("");
+    try {
+      const response = await fetch(presetForm.id ? `/api/transaction-presets?id=${presetForm.id}` : "/api/transaction-presets", {
+        method: presetForm.id ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, name: presetForm.name })
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存预设失败。");
+      setTransactionPresets((current) => [data, ...current.filter((item) => item._id !== data._id)]);
+      setPresetError("");
+      setPresetForm(null);
+      setMessage("账单预设已保存，未录入流水。");
+    } catch (err) {
+      setPresetFormError(err instanceof Error ? err.message : "保存预设失败。");
+    } finally { setPresetSaving(false); }
+  }
+
+  async function deletePreset(preset: TransactionPreset) {
+    setDeletingPresetId(preset._id);
+    setPresetError("");
+    try {
+      const response = await fetch(`/api/transaction-presets?id=${preset._id}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除预设失败。");
+      setTransactionPresets((current) => current.filter((item) => item._id !== preset._id));
+      setMessage("预设已删除。");
+      return true;
+    } catch (err) {
+      setPresetError(err instanceof Error ? err.message : "删除预设失败。");
+      return false;
+    } finally { setDeletingPresetId(null); }
+  }
 
   function persistModelLists(nextCategories = categories, nextPaymentMethods = paymentMethods) {
     localStorage.setItem(
@@ -193,8 +280,8 @@ export default function HomePage() {
     setDrafts([{
       type: "expense",
       amount: null,
-      currency: "CNY",
-      date: new Date().toISOString().slice(0, 10),
+      currency: "HKD",
+      date: ledgerToday(),
       category: null,
       paymentMethod: null,
       merchant: null,
@@ -420,83 +507,101 @@ export default function HomePage() {
 
       {tab === "entry" ? (
         <div className="entry-grid">
-          <section className="command-panel">
-            <div className="panel-head">
-              <span>AI 识别</span>
-              <div className="panel-actions">
-                <span>{text.length} 字</span>
-                <button className="text-button" type="button" onClick={startManualEntry}>
-                  手动录入
-                </button>
-              </div>
-            </div>
-            <textarea
-              className="command-input"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              placeholder=""
-              autoFocus
-            />
-            <div className="action-row">
-              <button className="primary-button" disabled={loading || !text.trim()} onClick={parseText}>
-                {loading ? "识别中..." : "识别账单"}
-              </button>
-            </div>
-          </section>
-
-          {drafts.length > 1 ? (
-            <section className="multi-draft-area">
-              <div className="panel multi-draft-toolbar">
-                <div>
-                  <strong>{drafts.length} 张待确认账单</strong>
-                  <p className="hint">左右滑动检查，每张都可以单独修改或录入。</p>
+            <section className="command-panel">
+              <div className="panel-head">
+                <span>AI 识别</span>
+                <div className="panel-actions">
+                  <span>{text.length} 字</span>
+                  <button className="text-button" type="button" onClick={startManualEntry}>
+                    手动录入
+                  </button>
                 </div>
               </div>
-              <div className="draft-carousel" aria-label="多账单待确认列表">
-                {drafts.map((item, index) => (
-                  <div className="draft-slide" key={`${item.originalText || "draft"}-${index}`}>
-                    <div className="draft-slide-meta">
-                      <span>
-                        {index + 1} / {drafts.length}
-                      </span>
-                      <button className="text-button" type="button" onClick={() => removeDraftAt(index)}>
-                        删除这张
-                      </button>
-                    </div>
-                    <TransactionEditor
-                      draft={item}
-                      categories={categories}
-                      paymentMethods={paymentMethods}
-                      merchantSuggestions={merchantSuggestions}
-                      onChange={(nextDraft) => updateDraftAt(index, nextDraft)}
-                      onSave={(payload) => saveTransaction(payload, index)}
-                      saving={saving}
-                      idSuffix={`draft-${index}`}
-                    />
-                  </div>
-                ))}
-              </div>
-              <div className="panel multi-draft-actions">
-                <button className="primary-button" disabled={saving || drafts.some((item) => !Number(item.amount || 0))} onClick={saveAllDrafts}>
-                  {saving ? "录入中..." : "全部录入"}
+              <textarea
+                className="command-input"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                placeholder=""
+                autoFocus
+              />
+              <div className="action-row">
+                <button className="primary-button" disabled={loading || !text.trim()} onClick={parseText}>
+                  {loading ? "识别中..." : "识别账单"}
                 </button>
               </div>
             </section>
-          ) : (
-            <TransactionEditor
-              draft={drafts[0] || null}
-              categories={categories}
-              paymentMethods={paymentMethods}
-              merchantSuggestions={merchantSuggestions}
-              onChange={(nextDraft) => setDrafts(nextDraft ? [nextDraft] : [])}
-              onSave={(payload) => saveTransaction(payload)}
-              saving={saving}
-            />
-          )}
+
+          <div className="draft-area" ref={draftAreaRef}>
+            {drafts.length > 1 ? (
+              <section className="multi-draft-area">
+                <div className="panel multi-draft-toolbar">
+                  <div>
+                    <strong>{drafts.length} 张待确认账单</strong>
+                    <p className="hint">左右滑动检查，每张都可以单独修改或录入。</p>
+                  </div>
+                </div>
+                <div className="draft-carousel" ref={carouselRef} aria-label="多账单待确认列表">
+                  {drafts.map((item, index) => (
+                    <div className="draft-slide" key={`${item.originalText || "draft"}-${index}`}>
+                      <div className="draft-slide-meta">
+                        <span>
+                          {index + 1} / {drafts.length}
+                        </span>
+                        <button className="text-button" type="button" onClick={() => removeDraftAt(index)}>
+                          删除这张
+                        </button>
+                      </div>
+                      <TransactionEditor
+                        key={`draft-${draftRevision}-${index}`}
+                        onSavePreset={openPresetFromDraft}
+                        draft={item}
+                        categories={categories}
+                        paymentMethods={paymentMethods}
+                        merchantSuggestions={merchantSuggestions}
+                        onChange={(nextDraft) => updateDraftAt(index, nextDraft)}
+                        onSave={(payload) => saveTransaction(payload, index)}
+                        saving={saving}
+                        idSuffix={`draft-${index}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="panel multi-draft-actions">
+                  <button className="primary-button" disabled={saving || drafts.some((item) => !Number(item.amount || 0))} onClick={saveAllDrafts}>
+                    {saving ? "录入中..." : "全部录入"}
+                  </button>
+                </div>
+              </section>
+            ) : (
+              <TransactionEditor
+                key={`draft-${draftRevision}`}
+                onSavePreset={openPresetFromDraft}
+                draft={drafts[0] || null}
+                categories={categories}
+                paymentMethods={paymentMethods}
+                merchantSuggestions={merchantSuggestions}
+                onChange={(nextDraft) => setDrafts(nextDraft ? [nextDraft] : [])}
+                onSave={(payload) => saveTransaction(payload)}
+                saving={saving}
+              />
+            )}
+          </div>
+
+          <TransactionPresetList
+            presets={transactionPresets}
+            loading={presetsLoading}
+            error={presetError}
+            disabled={saving || loading || presetSaving}
+            deletingId={deletingPresetId}
+            onRetry={loadTransactionPresets}
+            onUse={usePreset}
+            onEdit={editPreset}
+            onDelete={deletePreset}
+          />
         </div>
       ) : null}
 
-      {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} /> : null}
+      {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} displayCurrency={analysisCurrency} onCurrencyChange={setAnalysisCurrency} /> : null}
 
       {tab === "records" ? (
         <section className="panel">
@@ -596,6 +701,45 @@ export default function HomePage() {
             </div>
           </details>
         </section>
+      ) : null}
+
+      {presetForm ? (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="preset-dialog-title">
+          <div className="modal-panel preset-modal">
+            <div className="modal-head">
+              <strong id="preset-dialog-title">{presetForm.id ? "编辑账单预设" : "存为账单预设"}</strong>
+              <button type="button" className="text-button" disabled={presetSaving} onClick={() => setPresetForm(null)}>关闭</button>
+            </div>
+            <div className="preset-form-intro">
+              <label className="field" htmlFor="preset-name"><span>预设名称</span><input id="preset-name" className="input" autoFocus maxLength={80} value={presetForm.name} onChange={(event) => setPresetForm((current) => current ? { ...current, name: event.target.value } : null)} placeholder="例如：上班地铁" /></label>
+              <p className="hint">保存预设不会录入流水；使用时日期设为当天。</p>
+              {presetFormError ? <div className="preset-error" role="alert">{presetFormError}</div> : null}
+            </div>
+            {presetForm.id ? <TransactionEditor
+              draft={presetForm.draft}
+              categories={categories}
+              paymentMethods={paymentMethods}
+              merchantSuggestions={merchantSuggestions}
+              onChange={(draft) => setPresetForm((current) => current && draft ? { ...current, draft } : current)}
+              onSave={savePreset}
+              saving={presetSaving}
+              showDate={false}
+              idSuffix="preset-editor"
+              title="预设内容"
+              meta="可重复使用"
+              saveLabel="保存预设修改"
+            /> : (
+              <div className="preset-create-body">
+                <div className="preset-create-summary">
+                  <strong>{presetForm.draft.currency || "HKD"} {Number(presetForm.draft.amount || 0).toFixed(2)}</strong>
+                  <span>{presetForm.draft.category || "未分类"} · {presetForm.draft.paymentMethod || "未指定"}{presetForm.draft.merchant ? ` · ${presetForm.draft.merchant}` : ""}</span>
+                  {presetForm.draft.note ? <span>{presetForm.draft.note}</span> : null}
+                </div>
+                <button type="button" className="button" disabled={presetSaving} onClick={() => savePreset(draftToPayload(presetForm.draft))}>{presetSaving ? "保存中…" : "保存预设"}</button>
+              </div>
+            )}
+          </div>
+        </div>
       ) : null}
 
       {editingDraft ? (

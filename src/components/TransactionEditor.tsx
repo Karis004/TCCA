@@ -1,15 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useRef } from "react";
-import type { Category, ParsedTransaction, PaymentMethod, TransactionInput } from "@/models/ledger";
+import type { Category, TransactionDraft as DraftTransaction, PaymentMethod, TransactionInput } from "@/models/ledger";
 import { currencies } from "@/presets/ledger";
-
-type DraftTransaction = ParsedTransaction & {
-  amountCny?: number;
-  fxRateToCny?: number;
-  parseDurationMs?: number;
-  originalText?: string;
-};
 
 type Props = {
   draft: DraftTransaction | null;
@@ -23,6 +16,8 @@ type Props = {
   title?: string;
   meta?: string;
   saveLabel?: string;
+  onSavePreset?: (draft: DraftTransaction) => void;
+  showDate?: boolean;
 };
 
 export function TransactionEditor({
@@ -36,7 +31,9 @@ export function TransactionEditor({
   idSuffix = "",
   title = "待确认账单",
   meta,
-  saveLabel = "确认录入"
+  saveLabel = "确认录入",
+  onSavePreset,
+  showDate = true
 }: Props) {
   const latestDraftRef = useRef({ draft, onChange });
   const categoryOptionsId = idSuffix ? `category-options-${idSuffix}` : "category-options";
@@ -97,7 +94,7 @@ export function TransactionEditor({
     onSave({
       type: draft.type,
       amount: Number(draft.amount || 0),
-      currency: (draft.currency || "CNY").toUpperCase(),
+      currency: (draft.currency || "HKD").toUpperCase(),
       date: draft.date || new Date().toISOString().slice(0, 10),
       category: draft.category?.trim() || "未分类",
       paymentMethod: draft.paymentMethod?.trim() || "未指定",
@@ -119,7 +116,7 @@ export function TransactionEditor({
         <div className="split">
           <div className="field">
             <label>类型</label>
-            <select className="select" value={draft.type} onChange={(event) => update("type", event.target.value)}>
+            <select className="select" aria-label="账单类型" value={draft.type} onChange={(event) => update("type", event.target.value)}>
               <option value="expense">支出</option>
               <option value="income">收入</option>
               <option value="transfer">转账</option>
@@ -128,14 +125,14 @@ export function TransactionEditor({
           </div>
           <div className="field">
             <label>金额</label>
-            <input className="input" type="number" step="0.01" value={draft.amount || ""} onChange={(event) => update("amount", Number(event.target.value))} />
+            <input className="input" aria-label="金额" type="number" min="0.01" step="0.01" value={draft.amount || ""} onChange={(event) => update("amount", Number(event.target.value))} />
           </div>
         </div>
 
-        <div className="split">
+        <div className={showDate ? "split" : ""}>
           <div className="field">
             <label>货币</label>
-            <select className="select" value={draft.currency || "CNY"} onChange={(event) => update("currency", event.target.value)}>
+            <select className="select" aria-label="货币" value={draft.currency || "HKD"} onChange={(event) => update("currency", event.target.value)}>
               {currencies.map((item) => (
                 <option key={item} value={item}>
                   {item}
@@ -143,16 +140,16 @@ export function TransactionEditor({
               ))}
             </select>
           </div>
-          <div className="field">
+          {showDate ? <div className="field">
             <label>日期</label>
-            <input className="input" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} />
-          </div>
+            <input className="input" aria-label="日期" type="date" value={draft.date || ""} onChange={(event) => update("date", event.target.value)} />
+          </div> : null}
         </div>
 
         <div className="split">
           <div className="field">
             <label>分类</label>
-            <input className="input" list={categoryOptionsId} value={draft.category || ""} onChange={(event) => update("category", event.target.value || null)} />
+            <input className="input" aria-label="分类" list={categoryOptionsId} value={draft.category || ""} onChange={(event) => update("category", event.target.value || null)} />
             <datalist id={categoryOptionsId}>
               {categories.map((item) => (
                 <option key={item.id} value={item.name} />
@@ -161,7 +158,7 @@ export function TransactionEditor({
           </div>
           <div className="field">
             <label>支付方式</label>
-            <input className="input" list={paymentMethodOptionsId} value={draft.paymentMethod || ""} onChange={(event) => update("paymentMethod", event.target.value || null)} />
+            <input className="input" aria-label="支付方式" list={paymentMethodOptionsId} value={draft.paymentMethod || ""} onChange={(event) => update("paymentMethod", event.target.value || null)} />
             <datalist id={paymentMethodOptionsId}>
               {paymentMethods.map((item) => (
                 <option key={item.id} value={item.name} />
@@ -172,7 +169,7 @@ export function TransactionEditor({
 
         <div className="field">
           <label>商户</label>
-          <input className="input" value={draft.merchant || ""} onChange={(event) => update("merchant", event.target.value || null)} />
+          <input className="input" aria-label="商户" value={draft.merchant || ""} onChange={(event) => update("merchant", event.target.value || null)} />
           {merchantSuggestions.length ? (
             <div className="suggestion-row" aria-label="常用商户">
               {merchantSuggestions.map((merchant) => (
@@ -186,13 +183,16 @@ export function TransactionEditor({
 
         <div className="field">
           <label>备注</label>
-          <textarea className="textarea" value={draft.note || ""} onChange={(event) => update("note", event.target.value || null)} />
+          <textarea className="textarea" aria-label="备注" value={draft.note || ""} onChange={(event) => update("note", event.target.value || null)} />
         </div>
 
         <p className="hint">按实时汇率折算人民币，当前汇率 {draft.fxRateToCny || 1}</p>
-        <button className="button" disabled={saving || !draft.amount}>
-          {saving ? "处理中..." : saveLabel}
-        </button>
+        <div className="draft-save-actions">
+          {onSavePreset ? <button type="button" className="button secondary" disabled={saving || !draft.amount || draft.amount <= 0} onClick={() => onSavePreset(draft)}>存为预设</button> : null}
+          <button type="submit" className="button" disabled={saving || !draft.amount || draft.amount <= 0}>
+            {saving ? "处理中..." : saveLabel}
+          </button>
+        </div>
       </form>
     </section>
   );

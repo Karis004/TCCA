@@ -47,3 +47,20 @@ export type ParsedTransaction = {
   confidence: number;
   needsReview: boolean;
 };
+
+export type TransactionDraft = ParsedTransaction & {
+  amountCny?: number;
+  fxRateToCny?: number;
+  parseDurationMs?: number;
+  originalText?: string;
+};
+
+export type TransactionPresetInput = Pick<TransactionInput,
+  "type" | "amount" | "currency" | "category" | "paymentMethod" | "merchant" | "tags" | "note"
+> & { name: string };
+
+export type TransactionPreset = TransactionPresetInput & {
+  _id: string;
+  createdAt: string;
+  updatedAt: string;
+};

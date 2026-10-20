@@ -381,6 +381,11 @@ a {
   align-items: center;
 }
 
+.model-row > button {
+  min-height: 44px;
+  width: auto;
+}
+
 .add-row {
   margin-top: 12px;
 }
@@ -824,14 +829,6 @@ a {
     align-items: flex-end;
   }
 
-  .model-row {
-    grid-template-columns: 1fr;
-  }
-
-  .model-row .text-button,
-  .model-row .primary-button {
-    width: 100%;
-  }
 }
 
 /* Analytics: a shared period filter and compact, mobile-first charts. */
@@ -951,10 +948,11 @@ a {
 .analytics-metrics .metric-card {
   padding: 16px;
   box-shadow: none;
+  container-type: inline-size;
 }
 
 .analytics-metrics strong {
-  font-size: clamp(20px, 5.6vw, 28px);
+  font-size: clamp(16px, 13.5cqw, 28px);
   line-height: 1.2;
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
@@ -1133,4 +1131,53 @@ a {
   .analytics-metrics .metric-card { padding: 12px; }
   .period-controls > button { padding: 0 12px; }
   .category-amount { gap: 8px; }
+}
+
+.entry-grid { grid-template-areas: "command" "draft" "presets"; }
+.entry-grid > .command-panel { grid-area: command; }
+.entry-grid > .draft-area { grid-area: draft; }
+.entry-grid > .preset-panel { grid-area: presets; }
+.draft-area { min-width: 0; scroll-margin-top: 12px; }
+.draft-save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.draft-save-actions > .button { flex: 1 1 120px; }
+.preset-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.preset-panel { padding: 10px; }
+.preset-panel-head { margin-bottom: 8px; }
+.preset-panel-head h2 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 750; }
+.preset-panel-head > span { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.preset-list { display: grid; gap: 6px; }
+.preset-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px; align-items: center; border: 1px solid var(--line); background: var(--surface); }
+.preset-use { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 44px; padding: 8px 10px; border: 0; text-align: left; background: transparent; color: var(--ink); }
+.preset-use:hover { background: var(--bg); }
+.preset-use:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.preset-use:disabled { opacity: .5; cursor: not-allowed; }
+.preset-use > strong { min-width: 0; flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preset-amount { flex-shrink: 0; white-space: nowrap; font-size: 13px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.preset-card-actions { display: flex; gap: 4px; padding-right: 4px; }
+.preset-card-actions > button { min-height: 36px; padding: 0 7px; font-size: 12px; }
+.preset-card-actions > button:disabled { opacity: .5; cursor: not-allowed; }
+.preset-delete-confirm { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border-top: 1px solid var(--line); background: var(--bg); font-size: 12px; color: var(--muted); }
+.preset-delete-confirm > div { display: flex; gap: 8px; margin-left: auto; }
+.preset-empty { margin-bottom: 0; font-size: 12px; }
+.preset-error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 0; font-size: 13px; line-height: 1.6; color: var(--danger); }
+.preset-modal { background: var(--surface); }
+.preset-modal .modal-head { background: var(--surface); }
+.preset-form-intro { padding: 14px 12px 0; }
+.preset-form-intro .field > span { font-size: 12px; color: var(--muted); font-weight: 700; }
+.preset-form-intro .hint { margin: 8px 0 12px; font-size: 12px; }
+.preset-modal > .panel { border: 0; box-shadow: none; }
+.preset-create-body { display: grid; gap: 14px; padding: 0 12px 14px; }
+.preset-create-summary { display: grid; gap: 7px; padding: 14px; background: var(--bg); border: 1px solid var(--line); }
+.preset-create-summary strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.preset-create-summary span { color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+
+.analytics-filters-row { display: grid; gap: 10px; }
+.currency-picker { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.currency-picker .compact-select { flex: 1; min-height: 44px; font-size: 16px; }
+@media (min-width: 600px) {
+  .analytics-filters-row { grid-template-columns: minmax(0, 420px) minmax(180px, 230px); align-items: center; }
+  .currency-picker > span { white-space: nowrap; }
+}
+@media (min-width: 900px) {
+  .entry-grid { grid-template-areas: "command draft" "presets draft"; grid-template-rows: min-content 1fr; }
 }

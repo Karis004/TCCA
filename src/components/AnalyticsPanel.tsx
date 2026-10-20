@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { getCurrentMonth } from "@/lib/analytics";
-import type { Analytics } from "@/lib/analytics";
+import type { Analytics, AnalyticsDisplayCurrency } from "@/lib/analytics";
 
-type Props = { selectedMonth: string; onMonthChange: (month: string) => void };
+type Props = { selectedMonth: string; onMonthChange: (month: string) => void; displayCurrency: AnalyticsDisplayCurrency; onCurrencyChange: (currency: AnalyticsDisplayCurrency) => void };
 type FlowMode = "expense" | "income" | "all";
 const colors = ["var(--chart-blue)", "var(--chart-red)", "var(--muted)", "var(--chart-blue-soft)", "var(--chart-red-soft)", "var(--faint)"];
 const incomeColor = "var(--ink)";
@@ -13,8 +13,8 @@ const expenseColor = "var(--chart-red)";
 const tooltipStyle = { border: "1px solid var(--line)", borderRadius: 8, fontSize: 12, boxShadow: "0 4px 16px #1111110a" };
 const axisStyle = { fontSize: 11, fill: "var(--muted)" };
 
-function money(value: number) {
-  return `¥${value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+function formatMoney(value: number, currency: AnalyticsDisplayCurrency) {
+  return `${currency === "HKD" ? "HK$" : "¥"}${value.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 function compactAmount(value: number) {
   const abs = Math.abs(value);
@@ -28,21 +28,25 @@ function periodName(month: string) {
   return `${year}年${Number(number)}月`;
 }
 
-export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
+export function AnalyticsPanel({ selectedMonth, onMonthChange, displayCurrency, onCurrencyChange }: Props) {
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [flowMode, setFlowMode] = useState<FlowMode>("expense");
   const currentMonth = getCurrentMonth();
+  const money = (value: number) => formatMoney(value, displayCurrency);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError("");
-    fetch(`/api/analytics?month=${encodeURIComponent(selectedMonth)}`, { signal: controller.signal })
+    fetch(`/api/analytics?month=${encodeURIComponent(selectedMonth)}&currency=${displayCurrency}`, { signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error("读取分析数据失败，请稍后重试。");
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || "读取分析数据失败，请稍后重试。");
+        }
         const data: Analytics = await response.json();
         if (!controller.signal.aborted) setAnalytics(data);
       })
@@ -53,9 +57,9 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [selectedMonth, retry]);
+  }, [selectedMonth, displayCurrency, retry]);
 
-  const ready = analytics && analytics.selectedMonth === selectedMonth;
+  const ready = analytics && analytics.selectedMonth === selectedMonth && analytics.displayCurrency === displayCurrency;
 
   return (
     <div className="analytics-page">
@@ -69,6 +73,7 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
             {loading ? "正在更新…" : ready ? `${analytics.transactionCount} 笔记录` : ""}
           </span>
         </div>
+        <div className="analytics-filters-row">
         <div className="period-controls">
           <button type="button" aria-pressed={selectedMonth === currentMonth} className={selectedMonth === currentMonth ? "active" : ""} onClick={() => onMonthChange(currentMonth)}>本月</button>
           <label className="month-picker">
@@ -76,6 +81,8 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
             <input type="month" aria-label="选择月份" min="1000-01" max="9999-12" value={selectedMonth === "all" ? "" : selectedMonth} onChange={(event) => { if (/^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(event.target.value)) onMonthChange(event.target.value); }} />
           </label>
           <button type="button" aria-pressed={selectedMonth === "all"} className={selectedMonth === "all" ? "active" : ""} onClick={() => onMonthChange("all")}>全部</button>
+        </div>
+        <label className="currency-picker"><span>查看币种</span><select className="compact-select" aria-label="分析查看币种" value={displayCurrency} onChange={(event) => onCurrencyChange(event.target.value as AnalyticsDisplayCurrency)}><option value="HKD">港币 HKD</option><option value="CNY">人民币 CNY</option></select></label>
         </div>
         <p className="period-hint">收支、结余、每日流水与分类支出均按此时间统计。</p>
       </section>
@@ -86,15 +93,15 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
       {ready ? (
         <div className={`analytics-results${loading ? " is-loading" : ""}`} aria-busy={loading}>
           <section className="metric-board analytics-metrics" aria-label="所选期间收支">
-            <div className="metric-card metric-income"><span>收入</span><strong>{money(analytics.totalIncomeCny)}</strong></div>
-            <div className="metric-card metric-expense"><span>支出</span><strong>{money(analytics.totalExpenseCny)}</strong></div>
-            <div className="metric-card metric-balance"><span>{selectedMonth === "all" ? "累计结余" : "本期结余"}</span><strong>{money(analytics.balanceCny)}</strong></div>
+            <div className="metric-card metric-income"><span>收入</span><strong>{money(analytics.totalIncome)}</strong></div>
+            <div className="metric-card metric-expense"><span>支出</span><strong>{money(analytics.totalExpense)}</strong></div>
+            <div className="metric-card metric-balance"><span>{selectedMonth === "all" ? "累计结余" : "本期结余"}</span><strong>{money(analytics.balance)}</strong></div>
           </section>
-          <p className="accounting-note">结余为所选期间的收入减支出；收入含退款，转账不计入收支。</p>
+          <p className="accounting-note">结余为所选期间的收入减支出；收入含退款，转账不计入收支。{displayCurrency === "HKD" ? "港币账单保留原额，其他币种按当前汇率换算。" : "人民币金额沿用账单保存时的折算。"}</p>
 
           <section className="panel analytics-chart-panel" aria-label="每日流水">
             <div className="analytics-panel-head">
-              <div><h2>每日流水</h2><span className="chart-subtitle">{selectedMonth === "all" ? "全部记录，按日汇总" : periodName(selectedMonth)} · CNY</span></div>
+              <div><h2>每日流水</h2><span className="chart-subtitle">{selectedMonth === "all" ? "全部记录，按日汇总" : periodName(selectedMonth)} · {displayCurrency}</span></div>
               <div className="segmented-control" aria-label="每日流水显示范围">
                 {([['expense', '支出'], ['income', '收入'], ['all', '全部']] as const).map(([value, label]) => (
                   <button key={value} className={flowMode === value ? "active" : ""} type="button" aria-pressed={flowMode === value} onClick={() => setFlowMode(value)}>{label}</button>
@@ -119,7 +126,7 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
           </section>
 
           <section className="panel analytics-chart-panel" aria-label="分类支出">
-            <div className="analytics-panel-head"><div><h2>分类支出</h2><span className="chart-subtitle">{periodName(selectedMonth)} · 支出构成</span></div><span className="chart-unit">CNY</span></div>
+            <div className="analytics-panel-head"><div><h2>分类支出</h2><span className="chart-subtitle">{periodName(selectedMonth)} · 支出构成</span></div><span className="chart-unit">{displayCurrency}</span></div>
             {analytics.byCategory.length ? (
               <div className="category-breakdown">
                 <div className="category-donut">
@@ -131,13 +138,13 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
                       <Tooltip contentStyle={tooltipStyle} formatter={(value) => money(Number(value))} />
                     </PieChart>
                   </ResponsiveContainer>
-                  <div className="donut-caption"><span>支出合计</span><strong>{money(analytics.totalExpenseCny)}</strong></div>
+                  <div className="donut-caption"><span>支出合计</span><strong>{money(analytics.totalExpense)}</strong></div>
                 </div>
                 <ul className="category-legend">
                   {analytics.byCategory.map((item, index) => (
                     <li key={item.name}>
                       <span className="category-name"><i style={{ background: colors[index % colors.length] }} />{item.name}</span>
-                      <span className="category-amount"><strong>{money(item.value)}</strong><small>{(item.value / analytics.totalExpenseCny * 100).toFixed(1)}%</small></span>
+                      <span className="category-amount"><strong>{money(item.value)}</strong><small>{(item.value / analytics.totalExpense * 100).toFixed(1)}%</small></span>
                     </li>
                   ))}
                 </ul>
@@ -146,7 +153,7 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange }: Props) {
           </section>
 
           <section className="panel analytics-chart-panel monthly-panel" aria-label="月度净流向">
-            <div className="analytics-panel-head"><div><h2>月度净流向</h2><span className="chart-subtitle">全部月份 · 不受上方时间筛选影响</span></div><span className="chart-unit">CNY</span></div>
+            <div className="analytics-panel-head"><div><h2>月度净流向</h2><span className="chart-subtitle">全部月份 · 不受上方时间筛选影响</span></div><span className="chart-unit">{displayCurrency}</span></div>
             {analytics.byMonth.length ? (
               <>
                 <div className="analytics-chart monthly-chart">

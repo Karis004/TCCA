@@ -2,6 +2,7 @@ import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import { z } from "zod";
+import { ledgerToday } from "@/lib/transactionPresets";
 import { buildLedgerPrompt } from "@/lib/aiPrompt";
 
 type ParseOptions = {
@@ -145,7 +146,7 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
     throw new Error("Missing AI_API_BASE_URL, AI_API_KEY, or AI_MODEL.");
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = ledgerToday();
   const prompt = buildLedgerPrompt(input, today, options);
   const requestBody = JSON.stringify({
     model,

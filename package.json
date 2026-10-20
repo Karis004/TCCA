@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test:analytics": "node --experimental-strip-types --test tests/analytics.test.mjs"
+    "test:analytics": "node --experimental-strip-types --test tests/analytics.test.mjs",
+    "test:presets": "node --experimental-strip-types --test tests/transaction-presets.test.mjs",
+    "test:currency": "node --experimental-strip-types --test tests/currency.test.mjs"
   },
   "dependencies": {
     "@types/node": "^20.14.10",

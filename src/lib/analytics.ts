@@ -10,11 +10,14 @@ export type AnalyticsTransaction = {
 
 type AmountRow = { name: string; value: number };
 type DailyRow = { date: string; expense: number; income: number };
+export type AnalyticsDisplayCurrency = "CNY" | "HKD";
+type DisplayOptions = { currency: AnalyticsDisplayCurrency; rates: Record<string, number> };
 
 export type Analytics = {
-  totalIncomeCny: number;
-  totalExpenseCny: number;
-  balanceCny: number;
+  totalIncome: number;
+  totalExpense: number;
+  balance: number;
+  displayCurrency: AnalyticsDisplayCurrency;
   transactionCount: number;
   byCategory: AmountRow[];
   byPayment: AmountRow[];
@@ -60,11 +63,21 @@ function makeDailyRows(start: string, end: string) {
 }
 
 export function buildAnalytics(
-  transactions: AnalyticsTransaction[], requestedMonth?: string | null, now = new Date()
+  transactions: AnalyticsTransaction[], requestedMonth?: string | null, now = new Date(),
+  display: DisplayOptions = { currency: "CNY", rates: {} }
 ): Analytics {
   const currentMonth = getCurrentMonth(now);
   const selectedMonth = requestedMonth && isAnalyticsPeriod(requestedMonth) ? requestedMonth : currentMonth;
-  const valid = transactions.filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.date));
+  const valid = transactions.filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.date)).map((item) => {
+    const code = item.currency.toUpperCase() === "RMB" ? "CNY" : item.currency.toUpperCase();
+    let displayAmount = item.amountCny;
+    if (display.currency === "HKD") {
+      const rate = code === "HKD" ? 1 : display.rates[code];
+      if (!Number.isFinite(rate) || rate <= 0) throw new Error(`Missing exchange rate for ${code} to HKD`);
+      displayAmount = Number((item.amount * rate).toFixed(2));
+    }
+    return { ...item, displayAmount };
+  });
   const filtered = selectedMonth === "all" ? valid : valid.filter((item) => item.date.startsWith(`${selectedMonth}-`));
   const byCategory = new Map<string, number>();
   const byPayment = new Map<string, number>();
@@ -83,8 +96,8 @@ export function buildAnalytics(
     }
   }
   for (const item of valid) {
-    if (item.type === "expense") add(byMonth, item.date.slice(0, 7), -item.amountCny);
-    if (item.type === "income" || item.type === "refund") add(byMonth, item.date.slice(0, 7), item.amountCny);
+    if (item.type === "expense") add(byMonth, item.date.slice(0, 7), -item.displayAmount);
+    if (item.type === "income" || item.type === "refund") add(byMonth, item.date.slice(0, 7), item.displayAmount);
   }
 
   let byDay = new Map<string, DailyRow>();
@@ -101,11 +114,11 @@ export function buildAnalytics(
   for (const item of filtered) {
     add(byCurrency, item.currency, item.amount);
     const day = byDay.get(item.date);
-    const cents = Math.round(item.amountCny * 100);
+    const cents = Math.round(item.displayAmount * 100);
     if (item.type === "expense") {
       expenseCents += cents;
-      add(byCategory, item.category, item.amountCny);
-      add(byPayment, item.paymentMethod, item.amountCny);
+      add(byCategory, item.category, item.displayAmount);
+      add(byPayment, item.paymentMethod, item.displayAmount);
       if (day) day.expense += cents;
     }
     if (item.type === "income" || item.type === "refund") {
@@ -115,9 +128,10 @@ export function buildAnalytics(
   }
 
   return {
-    totalIncomeCny: incomeCents / 100,
-    totalExpenseCny: expenseCents / 100,
-    balanceCny: (incomeCents - expenseCents) / 100,
+    totalIncome: incomeCents / 100,
+    totalExpense: expenseCents / 100,
+    balance: (incomeCents - expenseCents) / 100,
+    displayCurrency: display.currency,
     transactionCount: filtered.length,
     byCategory: rankedRows(byCategory), byPayment: rankedRows(byPayment), byCurrency: rankedRows(byCurrency),
     byMonth: rows(byMonth), selectedMonth, currentMonth,
