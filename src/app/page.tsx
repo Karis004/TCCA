@@ -6,8 +6,10 @@ import { getCurrentMonth } from "@/lib/analytics";
 import type { AnalyticsDisplayCurrency } from "@/lib/analytics";
 import { TransactionEditor } from "@/components/TransactionEditor";
 import { TransactionPresetList } from "@/components/TransactionPresetList";
+import { PendingInputList } from "@/components/PendingInputList";
+import { mergePendingDrafts, pendingKey } from "@/lib/pendingInputs";
 import { ledgerToday, presetToDraft, suggestPresetName } from "@/lib/transactionPresets";
-import type { Category, TransactionDraft as Draft, PaymentMethod, Transaction, TransactionInput, TransactionPreset } from "@/models/ledger";
+import type { Category, TransactionDraft as Draft, PaymentMethod, Transaction, TransactionInput, TransactionPreset, PendingInput } from "@/models/ledger";
 import { categories as defaultCategories, paymentMethods as defaultPaymentMethods } from "@/presets/ledger";
 
 type Tab = "entry" | "analytics" | "records" | "settings";
@@ -135,6 +137,102 @@ export default function HomePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [parseError, setParseError] = useState("");
+  const [pendingInputs, setPendingInputs] = useState<PendingInput[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(true);
+  const [pendingBusy, setPendingBusy] = useState(false);
+  const [pendingError, setPendingError] = useState("");
+  const [pendingProgress, setPendingProgress] = useState("");
+  const [pendingSaving, setPendingSaving] = useState(false);
+  const [pendingEdit, setPendingEdit] = useState<PendingInput | null>(null);
+  const [pendingEditError, setPendingEditError] = useState("");
+  const pendingLock = useRef(false);
+
+  const loadPendingInputs = useCallback(async () => {
+    setPendingError("");
+    try {
+      const response = await fetch("/api/pending-inputs");
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "读取暂存文字失败。");
+      setPendingInputs(data);
+      setDrafts((current) => mergePendingDrafts(current, data));
+    } catch (err) { setPendingError(err instanceof Error ? err.message : "读取暂存文字失败。"); }
+    finally { setPendingLoading(false); }
+  }, []);
+  useEffect(() => { void loadPendingInputs(); }, [loadPendingInputs]);
+
+  async function savePendingText() {
+    if (!text.trim() || pendingSaving) return;
+    const savedText = text;
+    setPendingSaving(true);
+    setPendingError("");
+    try {
+      const response = await fetch("/api/pending-inputs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: savedText, referenceDate: ledgerToday() }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "暂存失败。");
+      setPendingInputs((current) => [...current, data]);
+      setText((current) => current === savedText ? "" : current);
+      setParseError("");
+      setMessage("文字已暂存，可继续记下一笔；恢复后可批量识别。");
+    } catch (err) { setPendingError(err instanceof Error ? err.message : "暂存失败，输入文字已保留。"); }
+    finally { setPendingSaving(false); }
+  }
+
+  async function editPendingText(form: HTMLFormElement) {
+    if (!pendingEdit) return;
+    setPendingSaving(true);
+    setPendingEditError("");
+    try {
+      const fields = new FormData(form);
+      const response = await fetch(`/api/pending-inputs?id=${pendingEdit._id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: fields.get("text"), referenceDate: fields.get("referenceDate") }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "保存失败。");
+      setPendingInputs((current) => current.map((item) => item._id === data._id ? data : item));
+      setPendingEdit(null);
+    } catch (err) { setPendingEditError(err instanceof Error ? err.message : "保存失败。"); }
+    finally { setPendingSaving(false); }
+  }
+
+  async function deletePendingInput(input: PendingInput) {
+    setPendingError("");
+    try {
+      const response = await fetch(`/api/pending-inputs?id=${input._id}`, { method: "DELETE" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "删除失败。");
+      setPendingInputs((current) => current.filter((item) => item._id !== input._id));
+      setDrafts((current) => current.filter((item) => item.pendingInputId !== input._id));
+    } catch (err) { setPendingError(err instanceof Error ? err.message : "删除失败。"); }
+  }
+
+  async function processPendingInputs(ids: string[]) {
+    if (pendingLock.current) return;
+    pendingLock.current = true;
+    setPendingBusy(true);
+    setPendingError("");
+    setMessage("");
+    let succeeded = 0;
+    let failed = 0;
+    try {
+      for (let index = 0; index < ids.length; index++) {
+        setPendingProgress(`正在识别 ${index + 1} / ${ids.length} 条…`);
+        try {
+          const response = await fetch(`/api/pending-inputs/parse?id=${ids[index]}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categories: categories.map((item) => item.name), paymentMethods: paymentMethods.map((item) => item.name) }) });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.error || "识别失败。");
+          setPendingInputs((current) => current.map((item) => item._id === data._id ? data : item));
+          setDrafts((current) => {
+            const keys = new Set(current.map(pendingKey));
+            const retained = current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText);
+            return [...retained, ...data.drafts.filter((draft: Draft) => !keys.has(pendingKey(draft)))];
+          });
+          succeeded++;
+        } catch { failed++; }
+      }
+      await loadPendingInputs();
+      setPendingProgress(`已识别 ${succeeded} 条${failed ? `，${failed} 条失败并保留，可稍后重试` : "，请确认账单后录入"}。`);
+      if (succeeded) setDraftRevision((value) => value + 1);
+    } finally { setPendingBusy(false); pendingLock.current = false; }
+  }
 
   async function refresh() {
     const response = await fetch("/api/transactions");
@@ -253,6 +351,7 @@ export default function HomePage() {
     setLoading(true);
     setError("");
     setMessage("");
+    setParseError("");
 
     try {
       const response = await fetch("/api/parse", {
@@ -266,9 +365,11 @@ export default function HomePage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "识别失败。");
-      setDrafts(getDraftsFromParseResponse(data));
+      setDrafts((current) => [...current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText), ...getDraftsFromParseResponse(data)]);
+      setText("");
+      setDraftRevision((value) => value + 1);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "识别失败。");
+      setParseError(err instanceof Error ? err.message : "识别失败。");
     } finally {
       setLoading(false);
     }
@@ -277,7 +378,7 @@ export default function HomePage() {
   function startManualEntry() {
     setError("");
     setMessage("");
-    setDrafts([{
+    setDrafts((current) => [...current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText), {
       type: "expense",
       amount: null,
       currency: "HKD",
@@ -290,13 +391,14 @@ export default function HomePage() {
       confidence: 1,
       needsReview: true
     }]);
+    setDraftRevision((value) => value + 1);
   }
 
-  async function createTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">) {
+  async function createTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draft?: Draft) {
     const response = await fetch("/api/transactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ ...payload, pendingInputId: draft?.pendingInputId, pendingDraftId: draft?.pendingDraftId })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "保存失败。");
@@ -309,15 +411,16 @@ export default function HomePage() {
     setMessage("");
 
     try {
-      await createTransaction(payload);
+      const draft = drafts[draftIndex ?? 0];
+      await createTransaction(payload, draft);
       if (typeof draftIndex === "number") {
         setDrafts((current) => current.filter((_, index) => index !== draftIndex));
       } else {
         setDrafts([]);
-        setText("");
       }
       setMessage("账单已录入。");
       await refresh();
+      await loadPendingInputs();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败。");
     } finally {
@@ -337,16 +440,18 @@ export default function HomePage() {
     setMessage("");
 
     try {
-      for (const item of drafts) {
-        await createTransaction(draftToPayload(item));
+      const batch = drafts.map((item) => ({ ...item, localDraftId: item.localDraftId || makeId("draft") }));
+      setDrafts(batch);
+      for (const item of batch) {
+        await createTransaction(draftToPayload(item), item);
+        setDrafts((current) => current.filter((draft) => draft.localDraftId !== item.localDraftId));
       }
-      setDrafts([]);
-      setText("");
       setMessage(`${drafts.length} 张账单已录入。`);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败。");
     } finally {
+      await loadPendingInputs();
       setSaving(false);
     }
   }
@@ -462,8 +567,14 @@ export default function HomePage() {
     });
   }
 
-  function removeDraftAt(index: number) {
+  async function removeDraftAt(index: number) {
+    const draft = drafts[index];
+    if (draft?.pendingInputId && draft.pendingDraftId) {
+      const response = await fetch(`/api/pending-inputs?id=${draft.pendingInputId}&draftId=${draft.pendingDraftId}`, { method: "DELETE" });
+      if (!response.ok) { setPendingError("移除暂存账单失败，请重试。"); return; }
+    }
     setDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    await loadPendingInputs();
   }
 
   const visibleTransactions = useMemo(() => transactions.slice(0, 80), [transactions]);
@@ -512,23 +623,27 @@ export default function HomePage() {
                 <span>AI 识别</span>
                 <div className="panel-actions">
                   <span>{text.length} 字</span>
-                  <button className="text-button" type="button" onClick={startManualEntry}>
+                  <button className="text-button" type="button" disabled={loading || saving || pendingBusy} onClick={startManualEntry}>
                     手动录入
                   </button>
                 </div>
               </div>
               <textarea
                 className="command-input"
+                aria-label="记账文字"
                 value={text}
+                disabled={loading}
                 onChange={(event) => setText(event.target.value)}
                 placeholder=""
                 autoFocus
               />
               <div className="action-row">
-                <button className="primary-button" disabled={loading || !text.trim()} onClick={parseText}>
+                <button type="button" className="text-button" disabled={loading || pendingSaving || !text.trim()} onClick={savePendingText}>{pendingSaving ? "暂存中…" : "暂存文字"}</button>
+                <button className="primary-button" disabled={loading || saving || pendingBusy || pendingSaving || !text.trim()} onClick={parseText}>
                   {loading ? "识别中..." : "识别账单"}
                 </button>
               </div>
+              {parseError ? <div className="parse-failure" role="alert"><p>{parseError}</p><span>输入已保留，可点「暂存文字」，稍后批量识别。</span></div> : null}
             </section>
 
           <div className="draft-area" ref={draftAreaRef}>
@@ -597,6 +712,24 @@ export default function HomePage() {
             onUse={usePreset}
             onEdit={editPreset}
             onDelete={deletePreset}
+          />
+          <PendingInputList
+            inputs={pendingInputs}
+            loading={pendingLoading}
+            busy={pendingBusy || loading || saving || pendingSaving}
+            processing={pendingBusy}
+            error={pendingError}
+            progress={pendingProgress}
+            onRefresh={loadPendingInputs}
+            onProcess={processPendingInputs}
+            onView={(input) => {
+              draftAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              const index = drafts.findIndex((draft) => draft.pendingInputId === input._id);
+              const slide = carouselRef.current?.children[index] as HTMLElement | undefined;
+              if (slide) carouselRef.current?.scrollTo({ left: slide.offsetLeft - (carouselRef.current.firstElementChild as HTMLElement).offsetLeft, behavior: "smooth" });
+            }}
+            onEdit={(input) => { setPendingEdit(input); setPendingEditError(""); }}
+            onDelete={deletePendingInput}
           />
         </div>
       ) : null}
@@ -702,6 +835,8 @@ export default function HomePage() {
           </details>
         </section>
       ) : null}
+
+      {pendingEdit ? <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pending-edit-title"><form className="modal-panel pending-edit" onSubmit={(event) => { event.preventDefault(); void editPendingText(event.currentTarget); }}><div className="modal-head"><strong id="pending-edit-title">编辑暂存文字</strong><button type="button" className="text-button" disabled={pendingSaving} onClick={() => setPendingEdit(null)}>关闭</button></div><label className="field"><span>原文</span><textarea className="textarea" aria-label="暂存原文" name="text" maxLength={12000} required value={pendingEdit.text} onChange={(event) => setPendingEdit({ ...pendingEdit, text: event.target.value })} /></label><label className="field"><span>参考日期（用于理解今天／昨天）</span><input className="input" aria-label="暂存参考日期" name="referenceDate" type="date" required value={pendingEdit.referenceDate} onChange={(event) => setPendingEdit({ ...pendingEdit, referenceDate: event.target.value })} /></label>{pendingEditError ? <p role="alert" className="preset-error">{pendingEditError}</p> : null}<button className="button" type="submit" disabled={pendingSaving}>{pendingSaving ? "保存中…" : "保存文字"}</button></form></div> : null}
 
       {presetForm ? (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="preset-dialog-title">

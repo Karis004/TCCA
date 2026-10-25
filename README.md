@@ -78,6 +78,10 @@ FX_API_KEY=你的汇率_API_KEY
 
 预设名称、金额、编辑和删除操作保持紧凑的一行。手机端将预设放在待确认区域之后，减少识别到账单确认之间的滚动距离。
 
+AI 暂时不可用时，可以点击输入区的「暂存文字」，保存当前原文后继续记录下一笔；无需先调用 AI。识别失败时会保留输入，并显示暂存提示。暂存文字单独保存在 MongoDB 的 `pending_inputs` 集合中，默认收起，支持编辑、删除和单条或批量识别。
+
+「批量识别」会逐条处理待识别文字，失败的保留原文及错误原因，成功的保存为待确认账单，刷新页面后可以继续确认。每条文字按其暂存时的参考日期理解「今天／昨天」，编辑时可调整该日期。已识别成功的条目不再重复调用 AI。确认录入后才写入流水并从暂存区移除，支持原有的「全部录入」；暂存账单重复确认不会重复写入。尚未提交的人工修改仍需在当前页面确认保存。
+
 分析页提供：
 
 - 页面顶部统一选择时间，默认当前月，也可选择任意月份或全部时间
@@ -160,6 +164,12 @@ pnpm test:presets
 pnpm test:currency
 ```
 
+暂存文字校验、恢复合并和去重测试：
+
+```bash
+pnpm test:pending
+```
+
 ## 项目结构
 
 ```text
@@ -225,6 +235,20 @@ src/
 `PUT /api/transaction-presets?id=...`、`DELETE /api/transaction-presets?id=...`
 
 更新或删除指定预设，不修改 `transactions` 流水集合。
+
+`GET /api/pending-inputs`、`POST /api/pending-inputs`
+
+读取未完成的暂存记录，或保存 `{ text, referenceDate: "YYYY-MM-DD" }`。读取时会恢复已超时的识别任务。
+
+`PUT /api/pending-inputs?id=...`、`DELETE /api/pending-inputs?id=...`
+
+编辑待识别原文与参考日期，或删除指定暂存记录。`DELETE` 可加 `draftId`，单独移除尚未录入的识别结果。
+
+`POST /api/pending-inputs/parse?id=...`
+
+识别指定原文并持久化草稿；已成功的记录直接返回原结果，失败则保留原文。通过短期任务租约避免同时重复调用 AI。批量操作在客户端逐条调用，部分失败不影响其他条目。
+
+`POST /api/transactions` 可携带 `pendingInputId` 与 `pendingDraftId`，仅在确认时写入暂存账单，并通过稳定的记录 ID 避免重试产生重复流水。
 
 ## 部署注意
 

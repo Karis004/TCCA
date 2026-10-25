@@ -53,6 +53,20 @@ export type TransactionDraft = ParsedTransaction & {
   fxRateToCny?: number;
   parseDurationMs?: number;
   originalText?: string;
+  pendingInputId?: string;
+  pendingDraftId?: string;
+  localDraftId?: string;
+};
+
+export type PendingInput = {
+  _id: string;
+  text: string;
+  referenceDate: string;
+  status: "pending" | "processing" | "ready" | "completed";
+  drafts: TransactionDraft[];
+  lastError?: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type TransactionPresetInput = Pick<TransactionInput,

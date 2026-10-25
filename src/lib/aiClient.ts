@@ -8,6 +8,7 @@ import { buildLedgerPrompt } from "@/lib/aiPrompt";
 type ParseOptions = {
   categories?: string[];
   paymentMethods?: string[];
+  referenceDate?: string;
 };
 
 class AiRequestError extends Error {
@@ -146,7 +147,7 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
     throw new Error("Missing AI_API_BASE_URL, AI_API_KEY, or AI_MODEL.");
   }
 
-  const today = ledgerToday();
+  const today = options.referenceDate || ledgerToday();
   const prompt = buildLedgerPrompt(input, today, options);
   const requestBody = JSON.stringify({
     model,

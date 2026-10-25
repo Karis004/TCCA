@@ -1,9 +1,12 @@
 import { ObjectId } from "mongodb";
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { normalizeCurrencyCode } from "@/lib/currency";
 import { getRateToCny } from "@/lib/fx";
 import { getDb } from "@/lib/mongodb";
+import { finishPendingDraft } from "@/lib/pendingInputStore";
+import type { PendingDoc } from "@/lib/pendingInputStore";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +40,24 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const payload = transactionSchema.parse(await request.json());
+    const body = await request.json();
+    const payload = transactionSchema.parse(body);
+    const source = z.object({
+      pendingInputId: z.string().regex(/^[a-f0-9]{24}$/i).optional(),
+      pendingDraftId: z.string().uuid().optional()
+    }).refine((value) => !!value.pendingInputId === !!value.pendingDraftId).parse(body);
+    const db = await getDb();
+    const sourceId = source.pendingInputId && source.pendingDraftId
+      ? new ObjectId(createHash("sha256").update(`pending:${source.pendingInputId}:${source.pendingDraftId}`).digest("hex").slice(0, 24)) : null;
+    if (sourceId) {
+      const existing = await db.collection("transactions").findOne({ _id: sourceId });
+      if (existing) {
+        await finishPendingDraft(source.pendingInputId!, source.pendingDraftId!);
+        return NextResponse.json(serialize(existing));
+      }
+      const input = await db.collection<PendingDoc>("pending_inputs").findOne({ _id: new ObjectId(source.pendingInputId!), status: "ready", "drafts.pendingDraftId": source.pendingDraftId });
+      if (!input) return NextResponse.json({ error: "这张暂存账单已处理或已删除，请刷新列表。" }, { status: 409 });
+    }
     const currency = normalizeCurrencyCode(payload.currency) || "CNY";
     const fxRateToCny = await getRateToCny(currency);
     const now = new Date();
@@ -50,7 +70,11 @@ export async function POST(request: Request) {
       updatedAt: now
     };
 
-    const db = await getDb();
+    if (sourceId) {
+      const saved = await db.collection("transactions").findOneAndUpdate({ _id: sourceId }, { $setOnInsert: doc }, { upsert: true, returnDocument: "after" });
+      await finishPendingDraft(source.pendingInputId!, source.pendingDraftId!);
+      return NextResponse.json(serialize(saved), { status: 201 });
+    }
     const result = await db.collection("transactions").insertOne(doc);
     return NextResponse.json(serialize({ ...doc, _id: result.insertedId }), { status: 201 });
   } catch (error) {
