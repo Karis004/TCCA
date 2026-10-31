@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { getCurrentMonth } from "@/lib/analytics";
 import type { AnalyticsDisplayCurrency } from "@/lib/analytics";
+import { invalidateAnalytics, useAnalyticsData } from "@/lib/useAnalyticsData";
 import { TransactionEditor } from "@/components/TransactionEditor";
 import { TransactionPresetList } from "@/components/TransactionPresetList";
 import { PendingInputList } from "@/components/PendingInputList";
@@ -133,6 +134,8 @@ export default function HomePage() {
   const [newPaymentMethodName, setNewPaymentMethodName] = useState("");
   const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth);
   const [analysisCurrency, setAnalysisCurrency] = useState<AnalyticsDisplayCurrency>("HKD");
+  const [modelListsReady, setModelListsReady] = useState(false);
+  const [showAllCategories, setShowAllCategories] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -147,6 +150,8 @@ export default function HomePage() {
   const [pendingEdit, setPendingEdit] = useState<PendingInput | null>(null);
   const [pendingEditError, setPendingEditError] = useState("");
   const pendingLock = useRef(false);
+  const excludedCategories = useMemo(() => [...new Set(categories.filter((item) => item.includeInAnalytics === false).map((item) => item.name.trim()).filter(Boolean))].sort(), [categories]);
+  const analyticsState = useAnalyticsData({ month: selectedMonth, currency: analysisCurrency, excludedCategories: showAllCategories ? [] : excludedCategories }, modelListsReady);
 
   const loadPendingInputs = useCallback(async () => {
     setPendingError("");
@@ -246,6 +251,7 @@ export default function HomePage() {
       if (Array.isArray(stored.categories)) setCategories(stored.categories);
       if (Array.isArray(stored.paymentMethods)) setPaymentMethods(stored.paymentMethods);
     }
+    setModelListsReady(true);
 
     (async () => {
       try {
@@ -394,7 +400,7 @@ export default function HomePage() {
     setDraftRevision((value) => value + 1);
   }
 
-  async function createTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draft?: Draft) {
+  async function createTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draft?: Draft, invalidate = true) {
     const response = await fetch("/api/transactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -402,6 +408,7 @@ export default function HomePage() {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "保存失败。");
+    if (invalidate) invalidateAnalytics();
     return data;
   }
 
@@ -443,7 +450,7 @@ export default function HomePage() {
       const batch = drafts.map((item) => ({ ...item, localDraftId: item.localDraftId || makeId("draft") }));
       setDrafts(batch);
       for (const item of batch) {
-        await createTransaction(draftToPayload(item), item);
+        await createTransaction(draftToPayload(item), item, false);
         setDrafts((current) => current.filter((draft) => draft.localDraftId !== item.localDraftId));
       }
       setMessage(`${drafts.length} 张账单已录入。`);
@@ -451,6 +458,7 @@ export default function HomePage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败。");
     } finally {
+      invalidateAnalytics();
       await loadPendingInputs();
       setSaving(false);
     }
@@ -471,6 +479,7 @@ export default function HomePage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "保存失败。");
 
+      invalidateAnalytics();
       setTransactions((current) => current.map((item) => (item._id === data._id ? data : item)));
       setEditingDraft(null);
       setMessage("账单已更新。");
@@ -492,6 +501,7 @@ export default function HomePage() {
       const response = await fetch(`/api/transactions?id=${id}`, { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "删除失败。");
+      invalidateAnalytics();
       if (editingDraft?._id === id) {
         setEditingDraft(null);
       }
@@ -506,6 +516,13 @@ export default function HomePage() {
   function updateCategory(id: string, name: string) {
     const next = categories.map((item) => (item.id === id ? { ...item, name } : item));
     setCategories(next);
+    persistModelLists(next, paymentMethods);
+  }
+
+  function toggleCategoryAnalysis(id: string, included: boolean) {
+    const next = categories.map((item) => item.id === id ? { ...item, includeInAnalytics: included } : item);
+    setCategories(next);
+    setShowAllCategories(false);
     persistModelLists(next, paymentMethods);
   }
 
@@ -734,7 +751,7 @@ export default function HomePage() {
         </div>
       ) : null}
 
-      {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} displayCurrency={analysisCurrency} onCurrencyChange={setAnalysisCurrency} /> : null}
+      {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} displayCurrency={analysisCurrency} onCurrencyChange={setAnalysisCurrency} {...analyticsState} excludedCategories={excludedCategories} showAllCategories={showAllCategories} onShowAllCategories={setShowAllCategories} /> : null}
 
       {tab === "records" ? (
         <section className="panel">
@@ -795,8 +812,9 @@ export default function HomePage() {
             </summary>
             <div className="model-list">
               {categories.map((item) => (
-                <div className="model-row" key={item.id}>
-                  <input className="input" value={item.name} onChange={(event) => updateCategory(item.id, event.target.value)} />
+                <div className="model-row category-model-row" key={item.id}>
+                  <input className="input" aria-label={`${item.name || "未命名"}分类名称`} value={item.name} onChange={(event) => updateCategory(item.id, event.target.value)} />
+                  <label className="category-analysis-toggle" title="是否纳入分析"><input type="checkbox" aria-label={`${item.name || "未命名"}纳入分析`} checked={item.includeInAnalytics !== false} onChange={(event) => toggleCategoryAnalysis(item.id, event.target.checked)} /></label>
                   <button className="text-button" onClick={() => removeCategory(item.id)}>
                     删除
                   </button>

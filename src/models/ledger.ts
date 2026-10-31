@@ -11,6 +11,7 @@ export type Category = {
   id: string;
   name: string;
   type?: TransactionType;
+  includeInAnalytics?: boolean;
 };
 
 export type TransactionInput = {

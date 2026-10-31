@@ -11,7 +11,7 @@ export type AnalyticsTransaction = {
 type AmountRow = { name: string; value: number };
 type DailyRow = { date: string; expense: number; income: number };
 export type AnalyticsDisplayCurrency = "CNY" | "HKD";
-type DisplayOptions = { currency: AnalyticsDisplayCurrency; rates: Record<string, number> };
+type DisplayOptions = { currency: AnalyticsDisplayCurrency; rates: Record<string, number>; excludedCategories?: string[] };
 
 export type Analytics = {
   totalIncome: number;
@@ -19,6 +19,8 @@ export type Analytics = {
   balance: number;
   displayCurrency: AnalyticsDisplayCurrency;
   transactionCount: number;
+  excludedTransactionCount: number;
+  excludedCategories: string[];
   byCategory: AmountRow[];
   byPayment: AmountRow[];
   byCurrency: AmountRow[];
@@ -68,7 +70,10 @@ export function buildAnalytics(
 ): Analytics {
   const currentMonth = getCurrentMonth(now);
   const selectedMonth = requestedMonth && isAnalyticsPeriod(requestedMonth) ? requestedMonth : currentMonth;
-  const valid = transactions.filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.date)).map((item) => {
+  const excludedCategories = [...new Set((display.excludedCategories || []).map((name) => name.trim()).filter(Boolean))].sort();
+  const excluded = new Set(excludedCategories);
+  const dated = transactions.filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item.date));
+  const valid = dated.filter((item) => !excluded.has(item.category.trim())).map((item) => {
     const code = item.currency.toUpperCase() === "RMB" ? "CNY" : item.currency.toUpperCase();
     let displayAmount = item.amountCny;
     if (display.currency === "HKD") {
@@ -83,7 +88,7 @@ export function buildAnalytics(
   const byPayment = new Map<string, number>();
   const byCurrency = new Map<string, number>();
   const byMonth = new Map<string, number>();
-  const dates = valid.map((item) => item.date).sort();
+  const dates = dated.map((item) => item.date).sort();
 
   // Fill gaps with zeroes, independently of the selected period.
   if (dates.length) {
@@ -133,6 +138,8 @@ export function buildAnalytics(
     balance: (incomeCents - expenseCents) / 100,
     displayCurrency: display.currency,
     transactionCount: filtered.length,
+    excludedTransactionCount: dated.filter((item) => excluded.has(item.category.trim()) && (selectedMonth === "all" || item.date.startsWith(`${selectedMonth}-`))).length,
+    excludedCategories,
     byCategory: rankedRows(byCategory), byPayment: rankedRows(byPayment), byCurrency: rankedRows(byCurrency),
     byMonth: rows(byMonth), selectedMonth, currentMonth,
     byDay: Array.from(byDay.values(), (day) => ({ ...day, expense: day.expense / 100, income: day.income / 100 }))

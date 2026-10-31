@@ -124,3 +124,44 @@ test('missing conversion rates fail explicitly instead of silently labelling CNY
   assert.throws(()=>buildAnalytics([transaction('2026-10-01','expense',30)],'all',now,{currency:'HKD',rates:{}}),/Missing exchange rate/);
   assert.equal(buildAnalytics([transaction('2026-10-01','expense',20,{amount:25,currency:'HKD'})],'all',now,{currency:'HKD',rates:{}}).totalExpense,25);
 });
+
+test('excluded rent and salary are consistently removed from summaries and every chart without changing ledger data',()=>{
+  const records=[...data.map(row=>row.type==='transfer'?{...row,category:'转账'}:row),transaction('2026-10-01','expense',12000,{category:'住房'})];
+  const original=structuredClone(records);
+  const options={currency:'CNY',rates:{},excludedCategories:['住房','工资']};
+  const current=buildAnalytics(records,'2026-10',now,options);
+  assert.equal(current.totalIncome,0);assert.equal(current.totalExpense,90);assert.equal(current.balance,-90);
+  assert.equal(current.transactionCount,3);assert.equal(current.excludedTransactionCount,3);
+  assert.equal(current.byDay.reduce((sum,row)=>sum+row.expense,0),90);
+  assert.equal(current.byDay.reduce((sum,row)=>sum+row.income,0),0);
+  assert.deepEqual(current.byCategory,[{name:'交通',value:60},{name:'餐饮',value:30}]);
+  assert.deepEqual(current.byPayment,[{name:'微信',value:90}]);
+  assert.deepEqual(current.byMonth,[{name:'2026-07',value:0},{name:'2026-08',value:0},{name:'2026-09',value:0},{name:'2026-10',value:-90}]);
+  assert.deepEqual(current.byCurrency,[{name:'CNY',value:2030},{name:'HKD',value:65}]);
+  const all=buildAnalytics(records,'all',now,options);
+  assert.equal(all.excludedTransactionCount,5);assert.deepEqual(all.byMonth,current.byMonth);
+  assert.equal(all.byDay[0].date,'2026-07-05');assert.deepEqual(records,original);
+});
+
+test('empty filtered periods preserve calendar axes and restoring categories restores the full totals',()=>{
+  const allHidden=buildAnalytics(data,'all',now,{currency:'CNY',rates:{},excludedCategories:['交通','餐饮','工资','住房']});
+  assert.equal(allHidden.transactionCount,0);assert.equal(allHidden.excludedTransactionCount,data.length);
+  assert.equal(allHidden.totalExpense,0);assert.equal(allHidden.totalIncome,0);assert.deepEqual(allHidden.byCategory,[]);
+  assert.ok(allHidden.byMonth.every(row=>row.value===0));assert.ok(allHidden.byDay.length>0);
+  assert.deepEqual(buildAnalytics(data,'all',now,{currency:'CNY',rates:{},excludedCategories:[]}),buildAnalytics(data,'all',now));
+  const empty=buildAnalytics(data,'2026-08',now,{currency:'CNY',rates:{},excludedCategories:['住房']});
+  assert.equal(empty.excludedTransactionCount,0);assert.equal(empty.transactionCount,0);
+});
+
+test('hidden foreign currency transactions do not require a conversion rate',()=>{
+  const records=[transaction('2026-10-01','expense',500,{amount:70,currency:'USD',category:'住房'}),transaction('2026-10-02','expense',16,{amount:20,currency:'HKD'})];
+  const result=buildAnalytics(records,'2026-10',now,{currency:'HKD',rates:{},excludedCategories:['住房']});
+  assert.equal(result.totalExpense,20);assert.equal(result.excludedTransactionCount,1);
+  assert.deepEqual(result.byCurrency,[{name:'HKD',value:20}]);
+});
+
+test('category exclusion names are normalized, deduplicated and matched exactly',()=>{
+  const records=[transaction('2026-10-01','expense',100,{category:'住房'}),transaction('2026-10-02','expense',10,{category:'住房维修'})];
+  const result=buildAnalytics(records,'all',now,{currency:'CNY',rates:{},excludedCategories:[' 住房 ','住房','']});
+  assert.deepEqual(result.excludedCategories,['住房']);assert.equal(result.totalExpense,10);assert.equal(result.excludedTransactionCount,1);
+});
