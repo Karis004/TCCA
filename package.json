@@ -11,7 +11,8 @@
     "test:analytics-cache": "node --experimental-strip-types --test tests/analytics-cache.test.mjs",
     "test:presets": "node --experimental-strip-types --test tests/transaction-presets.test.mjs",
     "test:currency": "node --experimental-strip-types --test tests/currency.test.mjs",
-    "test:pending": "node --experimental-strip-types --test tests/pending-inputs.test.mjs"
+    "test:pending": "node --experimental-strip-types --test tests/pending-inputs.test.mjs",
+    "test:drafts": "node --experimental-strip-types --test tests/draft-state.test.mjs"
   },
   "dependencies": {
     "@types/node": "^20.14.10",

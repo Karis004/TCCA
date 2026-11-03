@@ -357,7 +357,7 @@ a {
 
 .split {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
@@ -455,6 +455,9 @@ a {
 
 .field {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  max-width: 100%;
   gap: 6px;
 }
 
@@ -496,6 +499,28 @@ a {
   color: var(--ink);
   padding: 11px;
   min-width: 0;
+}
+
+/* iOS date controls can override border-box sizing when native appearance is active.
+   https://bugs.webkit.org/show_bug.cgi?id=301648 */
+.input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  inline-size: 100%;
+  max-inline-size: 100%;
+  min-inline-size: 0;
+  text-align: left;
+}
+
+.input[type="date"]::-webkit-date-and-time-value {
+  min-height: 1.4em;
+  min-width: 0;
+  text-align: left;
 }
 
 .compact-select {
@@ -760,7 +785,7 @@ a {
   }
 
   .split {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -778,7 +803,7 @@ a {
   }
 
   .split {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

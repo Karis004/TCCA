@@ -9,6 +9,7 @@ import { TransactionEditor } from "@/components/TransactionEditor";
 import { TransactionPresetList } from "@/components/TransactionPresetList";
 import { PendingInputList } from "@/components/PendingInputList";
 import { mergePendingDrafts, pendingKey } from "@/lib/pendingInputs";
+import { changeDraft, identifyDrafts } from "@/lib/draftState";
 import { ledgerToday, presetToDraft, suggestPresetName } from "@/lib/transactionPresets";
 import type { Category, TransactionDraft as Draft, PaymentMethod, Transaction, TransactionInput, TransactionPreset, PendingInput } from "@/models/ledger";
 import { categories as defaultCategories, paymentMethods as defaultPaymentMethods } from "@/presets/ledger";
@@ -126,6 +127,7 @@ export default function HomePage() {
   const [presetSaving, setPresetSaving] = useState(false);
   const [deletingPresetId, setDeletingPresetId] = useState<string | null>(null);
   const [draftRevision, setDraftRevision] = useState(0);
+  const [discardingDraftId, setDiscardingDraftId] = useState<string | null>(null);
   const draftAreaRef = useRef<HTMLDivElement>(null);
   const carouselRef = useRef<HTMLDivElement>(null);
   const [categories, setCategories] = useState<Category[]>(defaultCategories);
@@ -160,7 +162,7 @@ export default function HomePage() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "读取暂存文字失败。");
       setPendingInputs(data);
-      setDrafts((current) => mergePendingDrafts(current, data));
+      setDrafts((current) => identifyDrafts(mergePendingDrafts(current, data)));
     } catch (err) { setPendingError(err instanceof Error ? err.message : "读取暂存文字失败。"); }
     finally { setPendingLoading(false); }
   }, []);
@@ -228,7 +230,7 @@ export default function HomePage() {
           setDrafts((current) => {
             const keys = new Set(current.map(pendingKey));
             const retained = current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText);
-            return [...retained, ...data.drafts.filter((draft: Draft) => !keys.has(pendingKey(draft)))];
+            return identifyDrafts([...retained, ...data.drafts.filter((draft: Draft) => !keys.has(pendingKey(draft)))]);
           });
           succeeded++;
         } catch { failed++; }
@@ -294,7 +296,7 @@ export default function HomePage() {
   }
 
   function usePreset(preset: TransactionPreset) {
-    const draft = presetToDraft(preset);
+    const draft = identifyDrafts([presetToDraft(preset)])[0];
     setDrafts((current) => {
       const onlyEmptyDraft = current.length === 1 && !current[0].amount && !current[0].category && !current[0].paymentMethod && !current[0].merchant && !current[0].note;
       return onlyEmptyDraft ? [draft] : [...current, draft];
@@ -371,7 +373,8 @@ export default function HomePage() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "识别失败。");
-      setDrafts((current) => [...current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText), ...getDraftsFromParseResponse(data)]);
+      const recognized = identifyDrafts(getDraftsFromParseResponse(data));
+      setDrafts((current) => [...current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText), ...recognized]);
       setText("");
       setDraftRevision((value) => value + 1);
     } catch (err) {
@@ -384,7 +387,7 @@ export default function HomePage() {
   function startManualEntry() {
     setError("");
     setMessage("");
-    setDrafts((current) => [...current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText), {
+    const draft = identifyDrafts([{
       type: "expense",
       amount: null,
       currency: "HKD",
@@ -396,7 +399,8 @@ export default function HomePage() {
       note: null,
       confidence: 1,
       needsReview: true
-    }]);
+    }])[0];
+    setDrafts((current) => [...current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText), draft]);
     setDraftRevision((value) => value + 1);
   }
 
@@ -412,19 +416,16 @@ export default function HomePage() {
     return data;
   }
 
-  async function saveTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draftIndex?: number) {
+  async function saveTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draftId: string) {
+    const draft = drafts.find((item) => item.localDraftId === draftId);
+    if (!draft || saving || discardingDraftId) return;
     setSaving(true);
     setError("");
     setMessage("");
 
     try {
-      const draft = drafts[draftIndex ?? 0];
       await createTransaction(payload, draft);
-      if (typeof draftIndex === "number") {
-        setDrafts((current) => current.filter((_, index) => index !== draftIndex));
-      } else {
-        setDrafts([]);
-      }
+      setDrafts((current) => changeDraft(current, draftId, null));
       setMessage("账单已录入。");
       await refresh();
       await loadPendingInputs();
@@ -436,7 +437,7 @@ export default function HomePage() {
   }
 
   async function saveAllDrafts() {
-    if (!drafts.length) return;
+    if (!drafts.length || saving || discardingDraftId) return;
     if (drafts.some((item) => !Number(item.amount || 0))) {
       setError("请先补全每一张账单的金额，再一键全部录入。");
       return;
@@ -447,11 +448,10 @@ export default function HomePage() {
     setMessage("");
 
     try {
-      const batch = drafts.map((item) => ({ ...item, localDraftId: item.localDraftId || makeId("draft") }));
-      setDrafts(batch);
+      const batch = [...drafts];
       for (const item of batch) {
         await createTransaction(draftToPayload(item), item, false);
-        setDrafts((current) => current.filter((draft) => draft.localDraftId !== item.localDraftId));
+        setDrafts((current) => changeDraft(current, item.localDraftId!, null));
       }
       setMessage(`${drafts.length} 张账单已录入。`);
       await refresh();
@@ -574,24 +574,25 @@ export default function HomePage() {
     setMessage("模型列表已恢复为默认值。");
   }
 
-  function updateDraftAt(index: number, nextDraft: Draft | null) {
-    setDrafts((current) => {
-      if (!nextDraft) {
-        return current.filter((_, itemIndex) => itemIndex !== index);
-      }
-
-      return current.map((item, itemIndex) => (itemIndex === index ? nextDraft : item));
-    });
+  function updateDraft(id: string, nextDraft: Draft | null) {
+    setDrafts((current) => changeDraft(current, id, nextDraft));
   }
 
-  async function removeDraftAt(index: number) {
-    const draft = drafts[index];
-    if (draft?.pendingInputId && draft.pendingDraftId) {
-      const response = await fetch(`/api/pending-inputs?id=${draft.pendingInputId}&draftId=${draft.pendingDraftId}`, { method: "DELETE" });
-      if (!response.ok) { setPendingError("移除暂存账单失败，请重试。"); return; }
-    }
-    setDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index));
-    await loadPendingInputs();
+  async function removeDraft(id: string) {
+    const draft = drafts.find((item) => item.localDraftId === id);
+    if (!draft || saving || discardingDraftId) return;
+    setDiscardingDraftId(id);
+    setError("");
+    try {
+      if (draft.pendingInputId && draft.pendingDraftId) {
+        const response = await fetch(`/api/pending-inputs?id=${draft.pendingInputId}&draftId=${draft.pendingDraftId}`, { method: "DELETE" });
+        if (!response.ok) throw new Error("移除暂存账单失败，请重试。");
+      }
+      setDrafts((current) => changeDraft(current, id, null));
+      setMessage("待确认账单已移除。");
+      if (draft.pendingInputId) await loadPendingInputs();
+    } catch (err) { setError(err instanceof Error ? err.message : "移除账单失败，请重试。"); }
+    finally { setDiscardingDraftId(null); }
   }
 
   const visibleTransactions = useMemo(() => transactions.slice(0, 80), [transactions]);
@@ -674,47 +675,47 @@ export default function HomePage() {
                 </div>
                 <div className="draft-carousel" ref={carouselRef} aria-label="多账单待确认列表">
                   {drafts.map((item, index) => (
-                    <div className="draft-slide" key={`${item.originalText || "draft"}-${index}`}>
+                    <div className="draft-slide" key={item.localDraftId}>
                       <div className="draft-slide-meta">
                         <span>
                           {index + 1} / {drafts.length}
                         </span>
-                        <button className="text-button" type="button" onClick={() => removeDraftAt(index)}>
+                        <button className="text-button" type="button" disabled={saving || !!discardingDraftId} onClick={() => removeDraft(item.localDraftId!)}>
                           删除这张
                         </button>
                       </div>
                       <TransactionEditor
-                        key={`draft-${draftRevision}-${index}`}
                         onSavePreset={openPresetFromDraft}
                         draft={item}
                         categories={categories}
                         paymentMethods={paymentMethods}
                         merchantSuggestions={merchantSuggestions}
-                        onChange={(nextDraft) => updateDraftAt(index, nextDraft)}
-                        onSave={(payload) => saveTransaction(payload, index)}
-                        saving={saving}
-                        idSuffix={`draft-${index}`}
+                        onChange={(nextDraft) => updateDraft(item.localDraftId!, nextDraft)}
+                        onSave={(payload) => saveTransaction(payload, item.localDraftId!)}
+                        saving={saving || !!discardingDraftId}
+                        idSuffix={item.localDraftId}
                       />
                     </div>
                   ))}
                 </div>
                 <div className="panel multi-draft-actions">
-                  <button className="primary-button" disabled={saving || drafts.some((item) => !Number(item.amount || 0))} onClick={saveAllDrafts}>
+                  <button className="primary-button" disabled={saving || !!discardingDraftId || drafts.some((item) => !Number(item.amount || 0))} onClick={saveAllDrafts}>
                     {saving ? "录入中..." : "全部录入"}
                   </button>
                 </div>
               </section>
             ) : (
               <TransactionEditor
-                key={`draft-${draftRevision}`}
+                key={drafts[0]?.localDraftId || "empty-draft"}
                 onSavePreset={openPresetFromDraft}
                 draft={drafts[0] || null}
                 categories={categories}
                 paymentMethods={paymentMethods}
                 merchantSuggestions={merchantSuggestions}
-                onChange={(nextDraft) => setDrafts(nextDraft ? [nextDraft] : [])}
-                onSave={(payload) => saveTransaction(payload)}
-                saving={saving}
+                onChange={(nextDraft) => { if (drafts[0]?.localDraftId) updateDraft(drafts[0].localDraftId, nextDraft); }}
+                onSave={(payload) => { if (drafts[0]?.localDraftId) void saveTransaction(payload, drafts[0].localDraftId); }}
+                onDiscard={drafts[0] ? () => { void removeDraft(drafts[0].localDraftId!); } : undefined}
+                saving={saving || !!discardingDraftId}
               />
             )}
           </div>

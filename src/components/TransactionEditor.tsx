@@ -17,6 +17,7 @@ type Props = {
   meta?: string;
   saveLabel?: string;
   onSavePreset?: (draft: DraftTransaction) => void;
+  onDiscard?: () => void;
   showDate?: boolean;
 };
 
@@ -33,6 +34,7 @@ export function TransactionEditor({
   meta,
   saveLabel = "确认录入",
   onSavePreset,
+  onDiscard,
   showDate = true
 }: Props) {
   const latestDraftRef = useRef({ draft, onChange });
@@ -109,7 +111,7 @@ export function TransactionEditor({
     <section className="panel">
       <div className="panel-head">
         <span>{title}</span>
-        <span>{meta || (draft.parseDurationMs ? `${(draft.parseDurationMs / 1000).toFixed(1)}s` : "Draft")}</span>
+        <div className="panel-actions"><span>{meta || (draft.parseDurationMs ? `${(draft.parseDurationMs / 1000).toFixed(1)}s` : "Draft")}</span>{onDiscard ? <button type="button" className="text-button" disabled={saving} onClick={onDiscard}>删除这张</button> : null}</div>
       </div>
       <div className="draft-total">约 ¥{draft.amountCny?.toFixed(2) || "0.00"}</div>
       <form className="list" onSubmit={submit}>
