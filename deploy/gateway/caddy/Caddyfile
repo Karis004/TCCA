@@ -1,7 +1,0 @@
-{
-	acme_ca https://acme-v02.api.letsencrypt.org/directory
-}
-
-tcca.duckdns.org {
-	reverse_proxy tcca:3000
-}
