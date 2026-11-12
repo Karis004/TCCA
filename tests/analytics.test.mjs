@@ -165,3 +165,39 @@ test('category exclusion names are normalized, deduplicated and matched exactly'
   const result=buildAnalytics(records,'all',now,{currency:'CNY',rates:{},excludedCategories:[' 住房 ','住房','']});
   assert.deepEqual(result.excludedCategories,['住房']);assert.equal(result.totalExpense,10);assert.equal(result.excludedTransactionCount,1);
 });
+
+test('rolling week crosses months and scopes payment summaries, exclusions and daily totals together', () => {
+  const today = new Date('2026-11-01T16:30:00Z'); // Nov 2 in Hong Kong.
+  const bills = [
+    transaction('2026-10-26', 'expense', 900),
+    transaction('2026-10-27', 'expense', 20, { paymentMethod: '现金' }),
+    transaction('2026-10-28', 'expense', 5000, { category: '住房' }),
+    transaction('2026-11-02', 'expense', 30, { paymentMethod: '信用卡' }),
+    transaction('2026-11-02', 'refund', 4),
+    transaction('2026-11-03', 'expense', 800)
+  ];
+  const result = buildAnalytics(bills, 'last7', today, { currency: 'CNY', rates: {}, excludedCategories: ['住房'] });
+  assert.equal(result.selectedMonth, 'last7');
+  assert.equal(result.transactionCount, 3);
+  assert.equal(result.excludedTransactionCount, 1);
+  assert.equal(result.totalExpense, 50);
+  assert.equal(result.totalIncome, 4);
+  assert.equal(result.byDay.length, 7);
+  assert.equal(result.byDay[0].date, '2026-10-27');
+  assert.equal(result.byDay.at(-1).date, '2026-11-02');
+  assert.deepEqual(result.byPayment, [{ name: '信用卡', value: 30 }, { name: '现金', value: 20 }]);
+  assert.deepEqual(result.byMonth, buildAnalytics(bills, 'all', today, { currency: 'CNY', rates: {}, excludedCategories: ['住房'] }).byMonth);
+});
+
+test('rolling month is exactly 30 inclusive days across the year boundary', () => {
+  const result = buildAnalytics([
+    transaction('2026-12-03', 'expense', 100),
+    transaction('2026-12-04', 'expense', 5),
+    transaction('2027-01-02', 'expense', 7),
+    transaction('2027-01-03', 'expense', 200)
+  ], 'last30', new Date('2027-01-01T16:00:00Z'));
+  assert.equal(result.totalExpense, 12);
+  assert.equal(result.byDay.length, 30);
+  assert.equal(result.byDay[0].date, '2026-12-04');
+  assert.equal(result.byDay.at(-1).date, '2027-01-02');
+});

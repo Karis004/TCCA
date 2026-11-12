@@ -11,6 +11,7 @@ export function ownedCollection<T extends Document = Document>(db: Db, userId: s
     find: (filter: Filter<T> = {}, options?: FindOptions<T>) => collection.find(scope(filter), options),
     findOne: (filter: Filter<T> = {}) => collection.findOne(scope(filter)),
     countDocuments: (filter: Filter<T> = {}) => collection.countDocuments(scope(filter)),
+    distinct: (field: string, filter: Filter<T> = {}) => collection.distinct(field, scope(filter)),
     insertOne: (doc: any) => collection.insertOne({ ...doc, userId }),
     updateOne: (filter: Filter<T>, update: UpdateFilter<T>) => collection.updateOne(scope(filter), update),
     updateMany: (filter: Filter<T>, update: UpdateFilter<T>) => collection.updateMany(scope(filter), update),

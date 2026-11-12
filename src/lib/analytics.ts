@@ -37,7 +37,14 @@ export function getCurrentMonth(now = new Date()) {
 }
 
 export function isAnalyticsPeriod(value: string) {
-  return value === "all" || /^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value);
+  return value === "all" || value === "last7" || value === "last30" || /^[1-9]\d{3}-(0[1-9]|1[0-2])$/.test(value);
+}
+
+export function getRecentDates(days: number, now = new Date()) {
+  const end = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  const start = new Date(`${end}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - days + 1);
+  return { start: start.toISOString().slice(0, 10), end };
 }
 
 function add(map: Map<string, number>, key: string, value: number) {
@@ -83,7 +90,9 @@ export function buildAnalytics(
     }
     return { ...item, displayAmount };
   });
-  const filtered = selectedMonth === "all" ? valid : valid.filter((item) => item.date.startsWith(`${selectedMonth}-`));
+  const recent = selectedMonth === "last7" ? getRecentDates(7, now) : selectedMonth === "last30" ? getRecentDates(30, now) : null;
+  const inPeriod = (date: string) => selectedMonth === "all" || (recent ? date >= recent.start && date <= recent.end : date.startsWith(`${selectedMonth}-`));
+  const filtered = valid.filter(item => inPeriod(item.date));
   const byCategory = new Map<string, number>();
   const byPayment = new Map<string, number>();
   const byCurrency = new Map<string, number>();
@@ -106,7 +115,9 @@ export function buildAnalytics(
   }
 
   let byDay = new Map<string, DailyRow>();
-  if (selectedMonth !== "all") {
+  if (recent) {
+    byDay = makeDailyRows(recent.start, recent.end);
+  } else if (selectedMonth !== "all") {
     const [year, month] = selectedMonth.split("-").map(Number);
     const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
     byDay = makeDailyRows(`${selectedMonth}-01`, `${selectedMonth}-${lastDay}`);
@@ -138,7 +149,7 @@ export function buildAnalytics(
     balance: (incomeCents - expenseCents) / 100,
     displayCurrency: display.currency,
     transactionCount: filtered.length,
-    excludedTransactionCount: dated.filter((item) => excluded.has(item.category.trim()) && (selectedMonth === "all" || item.date.startsWith(`${selectedMonth}-`))).length,
+    excludedTransactionCount: dated.filter((item) => excluded.has(item.category.trim()) && inPeriod(item.date)).length,
     excludedCategories,
     byCategory: rankedRows(byCategory), byPayment: rankedRows(byPayment), byCurrency: rankedRows(byCurrency),
     byMonth: rows(byMonth), selectedMonth, currentMonth,

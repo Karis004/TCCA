@@ -73,17 +73,7 @@ export function TransactionEditor({
     };
   }, [draft?.currency, draft?.amount]);
 
-  if (!draft) {
-    return (
-      <section className="panel">
-        <div className="panel-head">
-          <span>{title}</span>
-          <span>Draft</span>
-        </div>
-        <p className="hint">AI 识别后，这里会出现一张可编辑账单。</p>
-      </section>
-    );
-  }
+  if (!draft) return null;
 
   function update(key: keyof DraftTransaction, value: unknown) {
     onChange({ ...draft, [key]: value } as DraftTransaction);
@@ -111,7 +101,7 @@ export function TransactionEditor({
     <section className="panel">
       <div className="panel-head">
         <span>{title}</span>
-        <div className="panel-actions"><span>{meta || (draft.parseDurationMs ? `${(draft.parseDurationMs / 1000).toFixed(1)}s` : "Draft")}</span>{onDiscard ? <button type="button" className="text-button" disabled={saving} onClick={onDiscard}>删除这张</button> : null}</div>
+        <div className="panel-actions">{meta ? <span>{meta}</span> : null}{onDiscard ? <button type="button" className="text-button" disabled={saving} onClick={onDiscard}>删除这张</button> : null}</div>
       </div>
       <div className="draft-total">约 ¥{draft.amountCny?.toFixed(2) || "0.00"}</div>
       <form className="list" onSubmit={submit}>
@@ -188,7 +178,6 @@ export function TransactionEditor({
           <textarea className="textarea" aria-label="备注" value={draft.note || ""} onChange={(event) => update("note", event.target.value || null)} />
         </div>
 
-        <p className="hint">按实时汇率折算人民币，当前汇率 {draft.fxRateToCny || 1}</p>
         <div className="draft-save-actions">
           {onSavePreset ? <button type="button" className="button secondary" disabled={saving || !draft.amount || draft.amount <= 0} onClick={() => onSavePreset(draft)}>存为预设</button> : null}
           <button type="submit" className="button" disabled={saving || !draft.amount || draft.amount <= 0}>

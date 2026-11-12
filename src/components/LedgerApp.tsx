@@ -5,6 +5,7 @@ import { AnalyticsPanel } from "@/components/AnalyticsPanel";
 import { getCurrentMonth } from "@/lib/analytics";
 import type { AnalyticsDisplayCurrency } from "@/lib/analytics";
 import { invalidateAnalytics, useAnalyticsData } from "@/lib/useAnalyticsData";
+import { TransactionRecords } from "@/components/TransactionRecords";
 import { TransactionEditor } from "@/components/TransactionEditor";
 import { TransactionPresetList } from "@/components/TransactionPresetList";
 import { AccountSettings } from "@/components/AccountSettings";
@@ -124,8 +125,6 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   const setCategories = (value: Category[]) => settingsSync.update({ categories: value });
   const setPaymentMethods = (value: PaymentMethod[]) => settingsSync.update({ paymentMethods: value });
   const setAnalysisCurrency = (value: AnalyticsDisplayCurrency) => settingsSync.update({ analysisCurrency: value });
-  const [nextCursor, setNextCursor] = useState("");
-  const [moreLoading, setMoreLoading] = useState(false);
   const [tab, setTab] = useState<Tab>("entry");
   const [text, setText] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -166,6 +165,12 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   const pendingLock = useRef(false);
   const excludedCategories = useMemo(() => [...new Set(categories.filter((item) => item.includeInAnalytics === false).map((item) => item.name.trim()).filter(Boolean))].sort(), [categories]);
   const analyticsState = useAnalyticsData({ userId: user.id, month: selectedMonth, currency: analysisCurrency, excludedCategories: showAllCategories ? [] : excludedCategories }, true);
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = setTimeout(() => setMessage(""), 3500);
+    return () => clearTimeout(timer);
+  }, [message]);
 
   const loadPendingInputs = useCallback(async () => {
     setPendingError("");
@@ -257,7 +262,6 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     const response = await fetch("/api/transactions");
     if (!response.ok) throw new Error("读取数据失败，请检查 MongoDB 配置。");
     setTransactions(await response.json());
-    setNextCursor(response.headers.get("X-Next-Cursor") || "");
   }
 
   useEffect(() => {
@@ -266,7 +270,6 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
         const response = await fetch("/api/transactions");
         if (!response.ok) throw new Error("读取数据失败，请检查 MongoDB 配置。");
         setTransactions(await response.json());
-    setNextCursor(response.headers.get("X-Next-Cursor") || "");
       } catch (err) {
         setError(err instanceof Error ? err.message : "读取数据失败。");
       }
@@ -540,7 +543,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     setCategories(next);
     setNewCategoryName("");
     persistModelLists(next, paymentMethods);
-    setMessage("分类已更新，并会参与后续 AI 识别。");
+    setMessage("分类已更新。");
   }
 
   function addPaymentMethod() {
@@ -550,7 +553,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     setPaymentMethods(next);
     setNewPaymentMethodName("");
     persistModelLists(categories, next);
-    setMessage("支付方式已更新，并会参与后续 AI 识别。");
+    setMessage("支付方式已更新。");
   }
 
   function removeCategory(id: string) {
@@ -571,7 +574,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     setNewCategoryName("");
     setNewPaymentMethodName("");
     settingsSync.update({ categories: defaultCategories, paymentMethods: defaultPaymentMethods });
-    setMessage("模型列表已恢复为默认值。");
+    setMessage("分类与支付方式已恢复默认。");
   }
 
   function updateDraft(id: string, nextDraft: Draft | null) {
@@ -595,14 +598,6 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     finally { setDiscardingDraftId(null); }
   }
 
-  const visibleTransactions = transactions;
-  async function loadMore() {
-    if (!nextCursor || moreLoading) return; setMoreLoading(true);
-    try { const response = await fetch(`/api/transactions?cursor=${encodeURIComponent(nextCursor)}`); const data = await response.json(); if (!response.ok) throw new Error(data.error || "读取流水失败。");
-      setTransactions(current => { const ids = new Set(current.map(item => item._id)); return [...current, ...data.filter((item: Transaction) => !ids.has(item._id))]; });
-      setNextCursor(response.headers.get("X-Next-Cursor") || "");
-    } catch (e) { setError(e instanceof Error ? e.message : "读取流水失败。"); } finally { setMoreLoading(false); }
-  }
   const merchantSuggestions = useMemo(() => {
     const scores = new Map<string, { count: number; recent: number }>();
 
@@ -647,7 +642,6 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
               <div className="panel-head">
                 <span>AI 识别</span>
                 <div className="panel-actions">
-                  <span>{text.length} 字</span>
                   <button className="text-button" type="button" disabled={loading || saving || pendingBusy} onClick={startManualEntry}>
                     手动录入
                   </button>
@@ -677,7 +671,6 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
                 <div className="panel multi-draft-toolbar">
                   <div>
                     <strong>{drafts.length} 张待确认账单</strong>
-                    <p className="hint">左右滑动检查，每张都可以单独修改或录入。</p>
                   </div>
                 </div>
                 <div className="draft-carousel" ref={carouselRef} aria-label="多账单待确认列表">
@@ -761,66 +754,25 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
 
       {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} displayCurrency={analysisCurrency} onCurrencyChange={setAnalysisCurrency} {...analyticsState} excludedCategories={excludedCategories} showAllCategories={showAllCategories} onShowAllCategories={setShowAllCategories} /> : null}
 
-      {tab === "records" ? (
-        <section className="panel">
-          <div className="panel-head">
-            <span>流水</span>
-            <span>{visibleTransactions.length} 条</span>
-          </div>
-          <div className="record-list">
-            {visibleTransactions.map((item) => (
-              <article className="record-card" key={item._id}>
-                <div className="record-main">
-                  <div className="record-title-row">
-                    <h3>{item.category}</h3>
-                    {item.merchant ? <span>{item.merchant}</span> : null}
-                  </div>
-                  <p>
-                    {item.date} · {item.paymentMethod} · {item.currency} {item.amount}
-                  </p>
-                  {item.note ? <p>{item.note}</p> : null}
-                </div>
-                <div className="record-side">
-                  <div className="record-actions">
-                    <button className="text-button" onClick={() => setEditingDraft(transactionToDraft(item))}>
-                      编辑
-                    </button>
-                    <button className="text-button danger-text" onClick={() => deleteTransaction(item._id)}>
-                      删除
-                    </button>
-                  </div>
-                  <strong className={item.type === "expense" ? "negative" : "positive"}>
-                    {item.type === "expense" ? "-" : "+"}
-                    {money(item.amountCny)}
-                  </strong>
-                  <button className="text-button" onClick={() => deleteTransaction(item._id)}>
-                    删除
-                  </button>
-                </div>
-              </article>
-            ))}
-            {nextCursor ? <button className="text-button" disabled={moreLoading} onClick={() => { void loadMore(); }}>{moreLoading ? "读取中…" : "加载更多流水"}</button> : null}
-            {!visibleTransactions.length ? <p className="empty">还没有流水。先用一句话录入第一笔。</p> : null}
-          </div>
-        </section>
-      ) : null}
+      {tab === "records" ? <TransactionRecords categories={categories} paymentMethods={paymentMethods} revision={transactions} onEdit={item => setEditingDraft(transactionToDraft(item))} onDelete={id => { void deleteTransaction(id); }} /> : null}
 
       {tab === "settings" ? (
-        <section className="panel settings-panel">
-          <div className="panel-head">
-            <span>设置</span>
-            <button className="text-button" onClick={resetModelLists}>
-              恢复默认
-            </button>
-          </div>
-
-          <AccountSettings user={user} settings={settings} syncStatus={settingsSync.status} onChange={settingsSync.update} onReload={() => { void settingsSync.reload(); }} onRetry={settingsSync.retry} readLegacyLists={readStoredLists} />
-
+        <AccountSettings
+          user={user}
+          settings={settings}
+          syncStatus={settingsSync.status}
+          onChange={settingsSync.update}
+          onReload={() => { void settingsSync.reload(); }}
+          onRetry={settingsSync.retry}
+          onReset={resetModelLists}
+          readLegacyLists={readStoredLists}
+        >
           <details className="setting-group">
             <summary>
               <span>消费分类</span>
               <small>{categories.length} 项</small>
             </summary>
+            <div className="setting-group-body">
             <div className="model-list">
               {categories.map((item) => (
                 <div className="model-row category-model-row" key={item.id}>
@@ -838,6 +790,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
                 添加
               </button>
             </div>
+            </div>
           </details>
 
           <details className="setting-group">
@@ -845,6 +798,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
               <span>支付方式</span>
               <small>{paymentMethods.length} 项</small>
             </summary>
+            <div className="setting-group-body">
             <div className="model-list">
               {paymentMethods.map((item) => (
                 <div className="model-row" key={item.id}>
@@ -861,11 +815,12 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
                 添加
               </button>
             </div>
+            </div>
           </details>
-        </section>
+        </AccountSettings>
       ) : null}
 
-      {pendingEdit ? <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pending-edit-title"><form className="modal-panel pending-edit" onSubmit={(event) => { event.preventDefault(); void editPendingText(event.currentTarget); }}><div className="modal-head"><strong id="pending-edit-title">编辑暂存文字</strong><button type="button" className="text-button" disabled={pendingSaving} onClick={() => setPendingEdit(null)}>关闭</button></div><label className="field"><span>原文</span><textarea className="textarea" aria-label="暂存原文" name="text" maxLength={12000} required value={pendingEdit.text} onChange={(event) => setPendingEdit({ ...pendingEdit, text: event.target.value })} /></label><label className="field"><span>参考日期（用于理解今天／昨天）</span><input className="input" aria-label="暂存参考日期" name="referenceDate" type="date" required value={pendingEdit.referenceDate} onChange={(event) => setPendingEdit({ ...pendingEdit, referenceDate: event.target.value })} /></label>{pendingEditError ? <p role="alert" className="preset-error">{pendingEditError}</p> : null}<button className="button" type="submit" disabled={pendingSaving}>{pendingSaving ? "保存中…" : "保存文字"}</button></form></div> : null}
+      {pendingEdit ? <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="pending-edit-title"><form className="modal-panel pending-edit" onSubmit={(event) => { event.preventDefault(); void editPendingText(event.currentTarget); }}><div className="modal-head"><strong id="pending-edit-title">编辑暂存文字</strong><button type="button" className="text-button" disabled={pendingSaving} onClick={() => setPendingEdit(null)}>关闭</button></div><label className="field"><span>原文</span><textarea className="textarea" aria-label="暂存原文" name="text" maxLength={12000} required value={pendingEdit.text} onChange={(event) => setPendingEdit({ ...pendingEdit, text: event.target.value })} /></label><label className="field"><span>参考日期</span><input className="input" aria-label="暂存参考日期" name="referenceDate" type="date" required value={pendingEdit.referenceDate} onChange={(event) => setPendingEdit({ ...pendingEdit, referenceDate: event.target.value })} /></label>{pendingEditError ? <p role="alert" className="preset-error">{pendingEditError}</p> : null}<button className="button" type="submit" disabled={pendingSaving}>{pendingSaving ? "保存中…" : "保存文字"}</button></form></div> : null}
 
       {presetForm ? (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="preset-dialog-title">
@@ -876,7 +831,6 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
             </div>
             <div className="preset-form-intro">
               <label className="field" htmlFor="preset-name"><span>预设名称</span><input id="preset-name" className="input" autoFocus maxLength={80} value={presetForm.name} onChange={(event) => setPresetForm((current) => current ? { ...current, name: event.target.value } : null)} placeholder="例如：上班地铁" /></label>
-              <p className="hint">保存预设不会录入流水；使用时日期设为当天。</p>
               {presetFormError ? <div className="preset-error" role="alert">{presetFormError}</div> : null}
             </div>
             {presetForm.id ? <TransactionEditor
@@ -890,7 +844,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
               showDate={false}
               idSuffix="preset-editor"
               title="预设内容"
-              meta="可重复使用"
+              meta=""
               saveLabel="保存预设修改"
             /> : (
               <div className="preset-create-body">
@@ -925,7 +879,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
               saving={saving}
               idSuffix={`edit-${editingDraft._id}`}
               title="账单内容"
-              meta="Edit"
+              meta=""
               saveLabel="保存修改"
             />
           </div>

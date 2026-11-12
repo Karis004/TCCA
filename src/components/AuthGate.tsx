@@ -38,11 +38,10 @@ export function AuthGate({ children }: { children: (user: AppUser, settings: Set
     } catch (e) { setError(e instanceof Error ? e.message : "登录未完成。"); }
     finally { setBusy(false); }
   }
-  return <main className="app-shell"><section className="panel login-panel"><div className="brand">TCCA</div><h1>自己的账，慢慢记。</h1><p className="hint">一句话整理收支。账单、预设与个人设置随账号保存。</p>
+  return <main className="app-shell"><section className="panel login-panel"><div className="brand">TCCA</div><h1>自己的账，慢慢记。</h1>
     {error ? <p className="notice error" role="alert">{error}</p> : null}
     <button className="primary-button" disabled={busy} onClick={() => { void login("google"); }}>使用 Google 登录</button>
     <button className="text-button" disabled={busy} onClick={() => { void login("passkey"); }}>使用通行密钥登录</button>
-    <p className="hint">首次使用 Google 登录，之后可在设置中添加通行密钥。</p>
     <div className="account-links"><Link href="/privacy">隐私说明</Link><Link href="/terms">使用条款</Link></div>
     {session.data ? <button className="text-button" onClick={() => { void authClient.signOut().then(() => window.location.reload()); }}>退出当前账号</button> : null}
   </section></main>;

@@ -1,3 +1,4 @@
+import { getRecentDates } from "@/lib/analytics";
 import { ObjectId } from "mongodb";
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
@@ -18,11 +19,32 @@ const transactionSchema = z.object({
  pendingInputId:z.string().regex(/^[a-f0-9]{24}$/i).optional(),pendingDraftId:z.string().uuid().optional()
 }).refine(v=>!!v.pendingInputId===!!v.pendingDraftId,"暂存来源无效。");
 export const GET=privateRoute(async(request,ctx)=>{
- const params=new URL(request.url).searchParams;let filter:any={};
+ const params=new URL(request.url).searchParams;
+ const search = z.object({ category:z.string().max(100).optional(), paymentMethod:z.string().max(100).optional(), q:z.string().trim().max(100).optional(), range:z.enum(["year","half","all"]).optional() }).parse(Object.fromEntries(params));
+ const filters:any[]=[];
+ if(search.category) filters.push({category:search.category});
+ if(search.paymentMethod) filters.push({paymentMethod:search.paymentMethod});
+ if(search.q) {
+   const literal=search.q.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+   filters.push({$or:[{note:{$regex:literal,$options:"i"}},{merchant:{$regex:literal,$options:"i"}}]});
+ }
+ if(search.range && search.range!=="all") {
+   const {start,end}=getRecentDates(search.range==="year"?365:183);
+   filters.push({date:{$gte:start,$lte:end}});
+ }
+ if(params.get("options")==="1") {
+   const collection=ownedCollection(ctx.db,ctx.userId,"transactions");
+   const filter=filters.length?{$and:filters}:{};
+   const [categories,paymentMethods]=await Promise.all([collection.distinct("category",filter),collection.distinct("paymentMethod",filter)]);
+   return NextResponse.json({categories,paymentMethods});
+ }
+ let filter:any={};
  if(params.get("cursor")){
   let cursor:any;try{cursor=z.object({date:z.string(),createdAt:z.string().datetime(),id:z.string().regex(/^[a-f0-9]{24}$/i)}).parse(JSON.parse(Buffer.from(params.get("cursor")!,"base64url").toString()))}catch{throw new HttpError(400,"分页参数无效。")}
   filter={$or:[{date:{$lt:cursor.date}},{date:cursor.date,createdAt:{$lt:new Date(cursor.createdAt)}},{date:cursor.date,createdAt:new Date(cursor.createdAt),_id:{$lt:new ObjectId(cursor.id)}}]};
  }
+ if(Object.keys(filter).length) filters.push(filter);
+ filter=filters.length?{$and:filters}:{};
  const docs=await ownedCollection(ctx.db,ctx.userId,"transactions").find(filter).sort({date:-1,createdAt:-1,_id:-1}).limit(101).toArray();
  const page=docs.slice(0,100);const last=page.at(-1);
  const next=docs.length>100&&last?Buffer.from(JSON.stringify({date:last.date,createdAt:last.createdAt.toISOString(),id:last._id.toString()})).toString("base64url"):"";

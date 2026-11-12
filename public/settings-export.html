@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TCCA · 导出旧设置</title><style>*{box-sizing:border-box}body{margin:0;background:#f4f4f0;color:#111;font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:560px;margin:10vh auto;padding:24px;background:white;border:1px solid #d8d8d0}h1{font-size:24px}button{padding:12px 18px;background:#111;color:white;border:0;font:inherit;cursor:pointer}p{overflow-wrap:anywhere}small{color:#6c6c67}</style></head>
-<body><main><h1>导出这个浏览器的旧设置</h1><p>本页只读取当前站点来源下的旧版分类、支付方式及分析勾选，不上传、不删除设置。</p><p>当前来源：<strong id="origin"></strong></p><p>请在原来记账的那台手机、同一浏览器和相同地址打开本页。HTTP、HTTPS、IP、域名、不同端口之间的数据不能互相读取。</p><button id="export" type="button">导出设置文件</button><p id="status" role="status"></p><small>保存文件后，登录新版 TCCA，在设置中选择“导入设置文件”。流水和账单预设已经在数据库，不需要用本页导出。</small></main>
+<body><main><h1>导出这个浏览器的旧设置</h1><p>本页只读取当前站点来源下的旧版分类、支付方式及分析勾选，不上传、不删除设置。</p><p>当前来源：<strong id="origin"></strong></p><p>请在原来记账的那台手机、同一浏览器和相同地址打开本页。HTTP、HTTPS、IP、域名、不同端口之间的数据不能互相读取。</p><button id="export" type="button">导出设置文件</button><p id="status" role="status"></p><small>保存文件后交由维护者核对账号，进行一次性设置迁移。流水和账单预设已经在数据库，不需要用本页导出。</small></main>
 <script>
 document.getElementById('origin').textContent=location.origin;
 document.getElementById('export').addEventListener('click',()=>{
