@@ -2,48 +2,21 @@
 
 TCCA 是一个个人用的 AI 记账网站。打开页面后直接输入一句自然语言，系统会调用 OpenAI 兼容接口解析账单，用户确认后保存到 MongoDB。分析页默认用港币查看，也可切换人民币，同时保留原币金额汇总。
 
-## 一键部署
+## 本地运行与部署
 
-准备一台已经安装 Docker 和 Docker Compose 的服务器，把项目放上去后，在项目根目录创建 `.env`：
+当前分支是 Google 登录、多用户独立账本版本。首次上线不能直接覆盖旧单用户应用；请按 [多用户发布手册](docs/MULTI_USER_RELEASE.md) 备份、验证和迁移。
 
-```bash
-MONGODB_URI=mongodb+srv://user:password@example.mongodb.net
-MONGODB_DB=tcca
-
-AI_API_BASE_URL=https://api.openai.com/v1
-AI_API_KEY=你的_API_KEY
-AI_MODEL=gpt-4.1-mini
-
-FX_API_BASE_URL=https://open.er-api.com/v6/latest
-FX_API_KEY=
-```
-
-然后运行：
+复制 `.env.example` 配置 MongoDB、Google OAuth 和两枚稳定的服务端密钥。本地使用独立预览数据库、`BETTER_AUTH_URL=http://localhost:3184`，生产使用正式 HTTPS 域名。用户在设置中填写自己的 AI 配置。
 
 ```bash
-docker compose up -d --build
+pnpm install --frozen-lockfile
+pnpm build
+pnpm start --hostname localhost --port 3184
 ```
 
-访问：
+正式环境用 `docker compose up -d --build --wait` 运行应用（宿主端口 8084）。MongoDB 是外部服务；HTTPS 入口由独立 personal-gateway 仓库管理。本仓库不维护证书或共享网关。
 
-```text
-http://服务器IP:3000
-```
-
-`docker-compose.yml` 会同时启动：
-
-- `tcca`：Next.js 应用
-
-MongoDB 不由 Docker 启动。你需要在 `.env` 的 `MONGODB_URI` 中填写自己的 MongoDB 地址。这样 Docker 只负责运行网站，数据仍然存放在你自己可控的数据库里。
-
-如果你申请了 ExchangeRate-API 的免费 Key，可以这样配置：
-
-```bash
-FX_API_BASE_URL=https://v6.exchangerate-api.com/v6
-FX_API_KEY=你的汇率_API_KEY
-```
-
-不填 `FX_API_KEY` 时，会使用 open access 汇率接口。
+Google 配置详见 [逐步操作说明](docs/GOOGLE_SIGN_IN_SETUP.md)。基础 Google OAuth 不依赖 Cloud 试用赠金，本项目不接入 Firebase 计费认证或 Google Cloud 付费计算服务。
 
 ## 用户使用
 
@@ -70,7 +43,7 @@ FX_API_KEY=你的汇率_API_KEY
 
 单张或多张待确认账单均可点击「删除这张」移除，不会删除已有流水。批量录入按固定草稿编号逐张清理，异步汇率回写不会重新生成已处理的草稿；部分失败时只保留尚未成功录入的账单。
 
-未明确指定币种时，AI 识别与手动新增均默认 HKD。“元”“块”或单独的 ¥、￥、$ 等货币符号也按港币处理；明确说出人民币、CNY、RMB，或日元、JPY 等币种名称/代码时，才使用对应币种。多笔账单分别判断，保留金额小数。待确认账单仍显示折算人民币金额。
+未明确指定币种时，AI 识别与手动新增使用设置中的默认币种，新账号默认 HKD。“元”“块”或单独的 ¥、￥、$ 等货币符号也按港币处理；明确说出人民币、CNY、RMB，或日元、JPY 等币种名称/代码时，才使用对应币种。多笔账单分别判断，保留金额小数。待确认账单仍显示折算人民币金额。
 
 商户字段会根据历史记录显示常用商户，方便快速点击填入。
 
@@ -96,7 +69,7 @@ AI 暂时不可用时，可以点击输入区的「暂存文字」，保存当�
 
 结余表示所选期间的收入减支出，不代表实际账户余额。收入包含退款，转账不计入收入、支出和月度净流向。当前月按香港时区确定。
 
-取消分类旁的勾选仅影响分析展示，不修改或删除流水，也不影响 AI 可用分类。收入、支出、结余、每日流水、分类支出、月度净流向和原币汇总统一使用勾选范围。分析页会标明已排除的分类，并可「临时显示全部」再恢复筛选；默认勾选沿用现有分类设置，保存在当前浏览器中。
+取消分类旁的勾选仅影响分析展示，不修改或删除流水，也不影响 AI 可用分类。收入、支出、结余、每日流水、分类支出、月度净流向和原币汇总统一使用勾选范围。分析页会标明已排除的分类，并可「临时显示全部」再恢复筛选；默认勾选沿用现有分类设置，保存到当前账号，跨设备同步。
 
 进入网站后会在记账页后台预加载分析。分析结果按月份、币种和排除分类分别缓存，重复切页、返回已看过的筛选组合会直接复用；同一请求会合并，旧请求不会覆盖账单修改后的新结果。新增、编辑、删除成功后立即使缓存失效并在后台更新；批量录入在结束时合并刷新，部分成功也会更新。后台更新会保留已有结果，出错时支持重试。返回网站时，超过五分钟的结果会在后台重新核对，以兼顾其他设备的改动和汇率变化；完整刷新页面则重新预加载。
 
@@ -273,8 +246,8 @@ src/
 
 ## 部署注意
 
-- 这是个人项目，没有登录系统。
-- AI Key 只保存在服务端环境变量中，不会出现在浏览器页面里。
+- Google 首次登录；可在设置添加多枚通行密钥。会话持久化到 MongoDB，365 天有效并每日滚动续期。
+- AI Key 按用户加密保存在数据库；仅本人可明确查看。备份时必须同时妥善保管加密主密钥，不能提交到 Git。
 - Docker 只运行 TCCA 应用，不会创建或保存 MongoDB 数据。
 - 账单数据存放在你配置的 `MONGODB_URI` 对应数据库中。
 - open access 汇率接口需要保留页面底部的 ExchangeRate-API attribution。

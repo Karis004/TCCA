@@ -1,0 +1,2 @@
+import Link from "next/link";
+export default function TermsPage() { return <main className="app-shell"><article className="panel legal-page"><h1>使用条款</h1><p>TCCA 提供个人记账、预设、文字识别及收支统计。AI 识别可能有误，录入前请核对金额、币种、日期和分类。收支统计不代表银行实时余额，也不用于执行付款或资金交易。</p><p>使用者自行提供并管理 AI 服务账号和 API Key，相关模型使用费用由使用者与提供商之间结算。本站不会替新用户使用其他用户或站长的 API Key。</p><p>请仅记录有权处理的数据，不上传非法内容，不攻击、滥用接口或超量占用服务。站长可为保障服务限制请求、停用滥用账号，并清理相关数据。</p><p>服务可能因维护、网络、第三方 API 或其他故障暂时不可用。请定期导出重要记录并保留原始凭证。本站仍在持续开发中。</p><p>使用前请同时阅读<Link href="/privacy">隐私说明</Link>。账号与数据处理问题请联系向你提供本站的运营者。</p><Link href="/">返回 TCCA</Link></article></main>; }

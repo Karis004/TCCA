@@ -5,6 +5,8 @@ outputs
 work
 .env
 .env.local
+.env.*.local
+*client_secret*.json
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*

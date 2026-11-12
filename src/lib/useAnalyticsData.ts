@@ -14,13 +14,14 @@ const cache = createAnalyticsCache(async (query) => {
 });
 
 export function invalidateAnalytics() { cache.invalidate(); }
+export function clearAnalytics() { cache.clear(); }
 
 export function useAnalyticsData(query: AnalyticsQuery, enabled: boolean) {
   const key = analyticsQueryKey(query);
   // Canonical keys keep logically identical category lists from refetching.
   const stableQuery = useMemo(() => {
-    const [month, currency, excludedCategories] = JSON.parse(key);
-    return normalizeAnalyticsQuery({ month, currency, excludedCategories });
+    const [month, currency, excludedCategories, userId] = JSON.parse(key);
+    return normalizeAnalyticsQuery({ month, currency, excludedCategories, userId });
   }, [key]);
   const getSnapshot = useCallback(() => cache.getSnapshot(stableQuery), [stableQuery]);
   const snapshot = useSyncExternalStore(cache.subscribe, getSnapshot, () => serverSnapshot);

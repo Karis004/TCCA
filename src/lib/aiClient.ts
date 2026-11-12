@@ -1,14 +1,17 @@
-import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import { z } from "zod";
 import { ledgerToday } from "@/lib/transactionPresets";
 import { buildLedgerPrompt } from "@/lib/aiPrompt";
+import { resolveAiTarget, redactAiError } from "@/lib/aiSecurity";
+import type { AiCredentials } from "@/lib/aiSecurity";
 
 type ParseOptions = {
   categories?: string[];
   paymentMethods?: string[];
   referenceDate?: string;
+  defaultCurrency?: string;
+  credentials?: AiCredentials;
 };
 
 class AiRequestError extends Error {
@@ -34,22 +37,6 @@ const parsedSchema = z.object({
   confidence: z.number().min(0).max(1).default(0.5),
   needsReview: z.boolean().default(true)
 });
-
-function lookupIpv4First(hostname: string, options: any, callback: any) {
-  dns.resolve4(hostname, (error, addresses) => {
-    if (!error && addresses.length) {
-      if (options?.all) {
-        callback(null, addresses.map((address) => ({ address, family: 4 })));
-        return;
-      }
-
-      callback(null, addresses[0], 4);
-      return;
-    }
-
-    dns.lookup(hostname, options, callback);
-  });
-}
 
 function getChatCompletionsUrl(apiBaseUrl: string) {
   const base = apiBaseUrl.trim().replace(/\/$/, "");
@@ -125,7 +112,7 @@ function parseAssistantJson(content: string) {
   const raw = JSON.parse(withoutFence);
   const candidates = Array.isArray(raw) ? raw : raw.transactions || raw.items || raw.data || [raw];
 
-  if (!Array.isArray(candidates) || !candidates.length) {
+  if (!Array.isArray(candidates) || !candidates.length || candidates.length > 50) {
     throw new Error("AI returned no ledger transactions.");
   }
 
@@ -139,12 +126,13 @@ function parseAssistantJson(content: string) {
 }
 
 export async function parseLedgerText(input: string, options: ParseOptions = {}) {
-  const apiBaseUrl = process.env.AI_API_BASE_URL;
-  const apiKey = process.env.AI_API_KEY;
-  const model = process.env.AI_MODEL;
+  const credentials = options.credentials;
+  const apiBaseUrl = credentials?.baseUrl;
+  const apiKey = credentials?.apiKey;
+  const model = credentials?.model;
 
   if (!apiBaseUrl || !apiKey || !model) {
-    throw new Error("Missing AI_API_BASE_URL, AI_API_KEY, or AI_MODEL.");
+    throw new Error("请先在设置中填写自己的 AI 配置。");
   }
 
   const today = options.referenceDate || ledgerToday();
@@ -164,11 +152,11 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      return await requestAndParseAi(getChatCompletionsUrl(apiBaseUrl), apiKey, requestBody);
+      return await requestAndParseAi(getChatCompletionsUrl(apiBaseUrl), apiKey, requestBody, credentials!);
     } catch (error) {
       lastError = error;
       if (!(error instanceof AiRequestError) || !error.retryable || attempt === 1) {
-        throw error;
+        throw new Error(redactAiError(error instanceof Error ? error.message : "AI 请求失败。", credentials!));
       }
       await delay(900);
     }
@@ -177,11 +165,11 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
   throw lastError instanceof Error ? lastError : new Error("AI request failed.");
 }
 
-async function requestAndParseAi(url: string, apiKey: string, requestBody: string) {
+async function requestAndParseAi(url: string, apiKey: string, requestBody: string, credentials: AiCredentials) {
   let response: { ok: boolean; status: number; text: string };
 
   try {
-    response = await postText(url, apiKey, requestBody);
+    response = await postText(url, apiKey, requestBody, credentials);
   } catch (error) {
     throw new AiRequestError(`AI API 网络错误: ${describeNetworkError(error)}`, true);
   }
@@ -214,9 +202,10 @@ async function requestAndParseAi(url: string, apiKey: string, requestBody: strin
   return parseAssistantJson(content);
 }
 
-function postText(url: string, apiKey: string, requestBody: string) {
+async function postText(url: string, apiKey: string, requestBody: string, credentials: AiCredentials) {
+  const checked = await resolveAiTarget(url, credentials.ownerLegacyOrigin);
   return new Promise<{ ok: boolean; status: number; text: string }>((resolve, reject) => {
-    const target = new URL(url);
+    const target = checked.target;
     const transport = target.protocol === "http:" ? http : https;
     const request = transport.request(
       {
@@ -225,7 +214,8 @@ function postText(url: string, apiKey: string, requestBody: string) {
         port: target.port,
         path: `${target.pathname}${target.search}`,
         method: "POST",
-        lookup: lookupIpv4First,
+        lookup: (_host: string, options: any, callback: any) => options?.all
+          ? callback(null, [checked.address]) : callback(null, checked.address.address, checked.address.family),
         timeout: 30000,
         headers: {
           "Content-Type": "application/json",
@@ -234,9 +224,14 @@ function postText(url: string, apiKey: string, requestBody: string) {
         }
       },
       (response) => {
+        response.on("error", reject);
+        response.on("aborted", () => reject(new Error("AI 响应中断。")));
         const chunks: Buffer[] = [];
+        let responseBytes = 0;
 
         response.on("data", (chunk) => {
+          responseBytes += chunk.length;
+          if (responseBytes > 2 * 1024 * 1024) { request.destroy(new Error("AI 响应过大。")); return; }
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
 
@@ -250,6 +245,8 @@ function postText(url: string, apiKey: string, requestBody: string) {
         });
       }
     );
+    const deadline = setTimeout(() => request.destroy(new Error("request timed out")), 35000);
+    request.on("close", () => clearTimeout(deadline));
 
     request.on("timeout", () => {
       request.destroy(new Error("request timed out"));

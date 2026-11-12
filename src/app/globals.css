@@ -76,6 +76,22 @@ a {
   padding: 14px 10px 88px;
 }
 
+.login-panel { max-width: 460px; margin: 12vh auto 0; display: grid; gap: 18px; }
+.login-panel h1 { font-size: clamp(24px, 5vw, 32px); margin: 0; }
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.account-row > .input { flex: 1; min-width: 0; }
+.account-row > span { overflow-wrap: anywhere; }
+.account-links { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 13px; }
+.account-links .text-button, .account-row .text-button { flex-shrink: 0; white-space: nowrap; }
+.settings-sync { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+.settings-sync .text-button { padding: 4px 7px; }
+.setting-import { padding: 12px; border: 1px solid var(--line); }
+.file-button { position: relative; overflow: hidden; }
+.file-button input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+.legal-page { max-width: 760px; margin: 32px auto; line-height: 1.8; }
+.legal-page h1 { font-size: 26px; }
+.admin-user { box-shadow: none; }
+
 .topbar {
   display: flex;
   align-items: center;

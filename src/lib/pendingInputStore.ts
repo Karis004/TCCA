@@ -2,8 +2,10 @@ import { ObjectId } from "mongodb";
 import type { WithId } from "mongodb";
 import type { PendingInput, TransactionDraft } from "@/models/ledger";
 import { getDb } from "@/lib/mongodb";
+import { ownedCollection } from "@/lib/ownership";
 
 export type PendingDoc = {
+  userId: string;
   text: string;
   referenceDate: string;
   status: PendingInput["status"];
@@ -19,9 +21,9 @@ export function serializePending(doc: WithId<PendingDoc>): PendingInput {
   return { _id: doc._id.toHexString(), text: doc.text, referenceDate: doc.referenceDate, status: doc.status, drafts: doc.drafts, lastError: doc.lastError, createdAt: doc.createdAt.toISOString(), updatedAt: doc.updatedAt.toISOString() };
 }
 
-export async function finishPendingDraft(inputId: string, draftId: string) {
+export async function finishPendingDraft(inputId: string, draftId: string, userId: string) {
   const db = await getDb();
-  const collection = db.collection<PendingDoc>("pending_inputs");
+  const collection = ownedCollection<PendingDoc>(db, userId, "pending_inputs");
   const _id = new ObjectId(inputId);
   await collection.updateOne({ _id, status: "ready" }, { $pull: { drafts: { pendingDraftId: draftId } }, $set: { updatedAt: new Date() } });
   await collection.updateOne({ _id, status: "ready", drafts: { $size: 0 } }, { $set: { status: "completed", updatedAt: new Date() } });

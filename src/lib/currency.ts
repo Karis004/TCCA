@@ -42,12 +42,12 @@ export function inferCurrencyFromText(text: string) {
   return codes.length === 1 ? codes[0] : null;
 }
 
-export function resolveCurrency(parsedCurrency: string | null | undefined, sourceText: string, multipleTransactions = false) {
+export function resolveCurrency(parsedCurrency: string | null | undefined, sourceText: string, multipleTransactions = false, defaultCurrency = DEFAULT_CURRENCY) {
   const explicit = explicitCurrencies(sourceText);
-  if (!explicit.length) return DEFAULT_CURRENCY;
+  if (!explicit.length) return defaultCurrency;
   if (!multipleTransactions && explicit.length === 1) return explicit[0];
   const normalized = normalizeCurrencyCode(parsedCurrency);
   // In a multi-bill input, keep each AI-selected currency only when it was explicitly named.
   // An unqualified bill remains HKD instead of inheriting another bill's currency.
-  return normalized && explicit.includes(normalized) ? normalized : DEFAULT_CURRENCY;
+  return normalized && explicit.includes(normalized) ? normalized : defaultCurrency;
 }

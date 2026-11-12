@@ -1,3 +1,7 @@
+import { privateRoute, readJson, rateLimit, HttpError } from "@/lib/privateApi";
+import type { ApiContext } from "@/lib/privateApi";
+import { ownedCollection } from "@/lib/ownership";
+import { getUserAi, getUserSettings } from "@/lib/userData";
 import { randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
@@ -8,13 +12,15 @@ import { serializePending } from "@/lib/pendingInputStore";
 import type { PendingDoc } from "@/lib/pendingInputStore";
 
 export const dynamic = "force-dynamic";
-export async function POST(request: Request) {
+async function handlePOST(request: Request, ctx: ApiContext) {
   const id = new URL(request.url).searchParams.get("id");
   if (!id || !ObjectId.isValid(id)) return NextResponse.json({ error: "无效的暂存编号。" }, { status: 400 });
-  const options = z.object({ categories: z.array(z.string()).optional(), paymentMethods: z.array(z.string()).optional() }).safeParse(await request.json());
-  if (!options.success) return NextResponse.json({ error: "识别参数无效。" }, { status: 400 });
+  await rateLimit(ctx.db, ctx.userId, "ai-minute", 10);
+  await rateLimit(ctx.db, ctx.userId, "ai-day", 200, 86400);
+  const settings = await getUserSettings(ctx);
+  const credentials = await getUserAi(ctx);
   const db = await getDb();
-  const collection = db.collection<PendingDoc>("pending_inputs");
+  const collection = ownedCollection<PendingDoc>(db, ctx.userId, "pending_inputs");
   const _id = new ObjectId(id);
   const attemptId = randomUUID();
   const claimed = await collection.findOneAndUpdate({ _id, $or: [{ status: "pending" }, { status: "processing", leaseUntil: { $lt: new Date() } }] }, { $set: { status: "processing", attemptId, leaseUntil: new Date(Date.now() + 180000), updatedAt: new Date() } }, { returnDocument: "after" });
@@ -24,7 +30,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "该文字正在识别或已处理，请刷新列表。" }, { status: 409 });
   }
   try {
-    const parsed = await parseDrafts(claimed.text, { ...options.data, referenceDate: claimed.referenceDate });
+    const parsed = await parseDrafts(claimed.text, { credentials, defaultCurrency: settings.defaultCurrency, categories: settings.categories.map(c => c.name), paymentMethods: settings.paymentMethods.map(p => p.name), referenceDate: claimed.referenceDate });
     const drafts = parsed.map((draft) => ({ ...draft, pendingInputId: id, pendingDraftId: randomUUID() }));
     const doc = await collection.findOneAndUpdate({ _id, attemptId, status: "processing" }, { $set: { status: "ready", drafts, lastError: null, updatedAt: new Date() }, $unset: { leaseUntil: "", attemptId: "" } }, { returnDocument: "after" });
     if (!doc) return NextResponse.json({ error: "识别状态已变更，请刷新列表。" }, { status: 409 });
@@ -35,3 +41,5 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
+
+export const POST = privateRoute(handlePOST);

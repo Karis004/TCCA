@@ -2,6 +2,7 @@
   "name": "tcca",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,12 +13,17 @@
     "test:presets": "node --experimental-strip-types --test tests/transaction-presets.test.mjs",
     "test:currency": "node --experimental-strip-types --test tests/currency.test.mjs",
     "test:pending": "node --experimental-strip-types --test tests/pending-inputs.test.mjs",
-    "test:drafts": "node --experimental-strip-types --test tests/draft-state.test.mjs"
+    "test:drafts": "node --experimental-strip-types --test tests/draft-state.test.mjs",
+    "test:multi-user": "node --experimental-strip-types --test tests/multi-user.test.mjs"
   },
   "dependencies": {
+    "@better-auth/mongo-adapter": "1.7.22",
+    "@better-auth/passkey": "1.7.22",
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "better-auth": "1.7.22",
+    "ipaddr.js": "2.2.0",
     "mongodb": "^6.8.0",
     "next": "15.5.19",
     "react": "^18.3.1",

@@ -67,3 +67,13 @@ test('focus revalidation only fetches after the freshness window expires',async(
   await cache.load(query);time+=299999;await cache.load(query);assert.equal(calls,1);
   time++;await cache.load(query);assert.equal(calls,2);
 });
+
+test('account changes isolate cached data and invalidate old in-flight requests',async()=>{
+  const old=deferred(); const cache=createAnalyticsCache(q=>q.userId==='A'?old.promise:Promise.resolve({totalExpense:7}));
+  const a={...query,userId:'A'},b={...query,userId:'B'};
+  assert.notEqual(analyticsQueryKey(a),analyticsQueryKey(b));
+  const pending=cache.load(a); await Promise.resolve(); cache.clear(); await cache.load(b);
+  old.resolve({totalExpense:999}); await pending;
+  assert.equal(cache.getSnapshot(a).data,null);
+  assert.equal(cache.getSnapshot(b).data.totalExpense,7);
+});

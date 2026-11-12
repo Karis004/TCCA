@@ -5,11 +5,24 @@ services:
     restart: unless-stopped
     ports:
       - "8084:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/auth/ok').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
     environment:
       MONGODB_URI: ${MONGODB_URI}
       MONGODB_DB: ${MONGODB_DB:-tcca}
-      AI_API_BASE_URL: ${AI_API_BASE_URL}
-      AI_API_KEY: ${AI_API_KEY}
-      AI_MODEL: ${AI_MODEL}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?Set public HTTPS origin}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?Set persistent authentication secret}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set Google OAuth client ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set Google OAuth client secret}
+      OWNER_GOOGLE_EMAIL: ${OWNER_GOOGLE_EMAIL:?Set owner Google email}
+      AI_CONFIG_ENCRYPTION_KEY: ${AI_CONFIG_ENCRYPTION_KEY:?Set persistent encryption key}
+      ALLOW_NEW_USERS: ${ALLOW_NEW_USERS:-true}
+      AI_API_BASE_URL: ${AI_API_BASE_URL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
       FX_API_BASE_URL: ${FX_API_BASE_URL:-https://open.er-api.com/v6/latest}
       FX_API_KEY: ${FX_API_KEY:-}

@@ -3,9 +3,11 @@ import { categories, paymentMethods } from "@/presets/ledger";
 type PromptLists = {
   categories?: string[];
   paymentMethods?: string[];
+  defaultCurrency?: string;
 };
 
 export function buildLedgerPrompt(input: string, today: string, lists: PromptLists = {}) {
+  const defaultCurrency = lists.defaultCurrency || "HKD";
   const categoryNames = lists.categories?.length ? lists.categories : categories.map((item) => item.name);
   const paymentMethodNames = lists.paymentMethods?.length ? lists.paymentMethods : paymentMethods.map((item) => item.name);
 
@@ -20,7 +22,7 @@ export function buildLedgerPrompt(input: string, today: string, lists: PromptLis
 5. 不确定的字段填 null，不要编造。
 6. 金额必须是数字，保留小数，不把货币符号当作金额数字；每笔金额分别对应其原文，没有金额时 amount 为 null。
 7. currency 使用 ISO 货币代码。人民币写 CNY，港币写 HKD，美元写 USD。
-8. 用户常居香港，未明确指定币种的每笔交易一律默认 HKD。单独出现“元”“块”“块钱”或 ¥、￥、$、€、£、円 等符号，均使用 HKD，不要据此推断人民币、日元、美元等。只有用户明确说出人民币、CNY、RMB 时才使用 CNY；明确说出日元、JPY 时才使用 JPY；美元、USD 使用 USD；港币、HKD、港元使用 HKD；其他币种同理。多笔交易逐笔判断币种，不把其中一笔的币种强加给其他账单；若用户明确指定整段都使用某币种，则遵从该统一指定。
+8. 未明确指定币种的每笔交易一律默认 ${defaultCurrency}。单独出现“元”“块”“块钱”或 ¥、￥、$、€、£、円 等符号，均使用 ${defaultCurrency}，不要据此推断人民币、日元、美元等。只有用户明确说出人民币、CNY、RMB 时才使用 CNY；明确说出日元、JPY 时才使用 JPY；美元、USD 使用 USD；港币、HKD、港元使用 HKD；其他币种同理。多笔交易逐笔判断币种，不把其中一笔的币种强加给其他账单；若用户明确指定整段都使用某币种，则遵从该统一指定。
 9. date 使用 YYYY-MM-DD。相对日期以今天 ${today} 为基准。
 10. category 和 paymentMethod 优先使用给定列表里的中文名称。
 11. type 只能是 expense、income、transfer、refund。

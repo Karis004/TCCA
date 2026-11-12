@@ -1,6 +1,6 @@
 import type { Analytics, AnalyticsDisplayCurrency } from "./analytics";
 
-export type AnalyticsQuery = { month: string; currency: AnalyticsDisplayCurrency; excludedCategories: string[] };
+export type AnalyticsQuery = { month: string; currency: AnalyticsDisplayCurrency; excludedCategories: string[]; userId?: string };
 export type AnalyticsSnapshot = { data: Analytics | null; loading: boolean; error: string; revision: number };
 type Entry = { state: AnalyticsSnapshot; updatedAt: number; request: Promise<void> | null; token: number };
 
@@ -9,7 +9,7 @@ export function normalizeAnalyticsQuery(query: AnalyticsQuery): AnalyticsQuery {
 }
 export function analyticsQueryKey(query: AnalyticsQuery) {
   const normalized = normalizeAnalyticsQuery(query);
-  return JSON.stringify([normalized.month, normalized.currency, normalized.excludedCategories]);
+  return JSON.stringify([normalized.month, normalized.currency, normalized.excludedCategories, normalized.userId || ""]);
 }
 export function analyticsQueryUrl(query: AnalyticsQuery) {
   const normalized = normalizeAnalyticsQuery(query);
@@ -72,6 +72,10 @@ export function createAnalyticsCache(
       });
       notify();
     },
-    getRevision() { return revision; }
+    getRevision() { return revision; },
+    clear() {
+      entries.forEach(entry => { entry.token++; entry.request = null; });
+      entries.clear(); revision++; notify();
+    }
   };
 }

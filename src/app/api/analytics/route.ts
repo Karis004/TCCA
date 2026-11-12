@@ -1,3 +1,7 @@
+import { privateRoute, readJson, rateLimit, HttpError } from "@/lib/privateApi";
+import type { ApiContext } from "@/lib/privateApi";
+import { ownedCollection } from "@/lib/ownership";
+import { getUserAi, getUserSettings } from "@/lib/userData";
 import { NextResponse } from "next/server";
 import { buildAnalytics, isAnalyticsPeriod } from "@/lib/analytics";
 import type { AnalyticsTransaction } from "@/lib/analytics";
@@ -6,7 +10,7 @@ import { getRateToCny } from "@/lib/fx";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+async function handleGET(request: Request, ctx: ApiContext) {
   const params = new URL(request.url).searchParams;
   const month = params.get("month");
   const currency = params.get("currency") || "HKD";
@@ -22,7 +26,7 @@ export async function GET(request: Request) {
   }
 
   const db = await getDb();
-  const transactions = await db.collection<AnalyticsTransaction>("transactions").find({}, {
+  const transactions = await ownedCollection<AnalyticsTransaction>(db, ctx.userId, "transactions").find({}, {
     projection: { _id: 0, type: 1, amount: 1, amountCny: 1, currency: 1, category: 1, paymentMethod: 1, date: 1 }
   }).toArray();
 
@@ -41,3 +45,5 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "暂时无法换算港币，请稍后重试或切换人民币视图。" }, { status: 503 });
   }
 }
+
+export const GET = privateRoute(handleGET);
