@@ -1,6 +1,6 @@
 # TCCA：HTTPS 与 Google 登录准备指南
 
-更新日期：2026-11-12。正式域名已改为 `tcca.duckdns.org`，本轮直接访问 HTTPS 返回 200 且页面标题为 TCCA；Google 登录代码尚未接入。
+更新日期：2026-11-13。正式域名为 `tcca.duckdns.org`，Google 登录、多用户隔离、个人配置及站长后台已发布；以下保留 Google 控制台手工配置教程，生产迁移与验收见 MULTI_USER_RELEASE.md。
 
 ## 本项目固定使用的地址
 
@@ -89,7 +89,7 @@ Google 的登录 Codelab 明确账号和项目免费，并用自托管网页／�
 - 不把 `duckdns.org` 当作自己拥有的根域名填写。
 - 初期测试可先不上传 Logo，也不急于申请正式品牌发布。
 - 主页填写 `https://tcca.duckdns.org`；HTTPS 已在本轮确认可访问。
-- 隐私政策和条款须填真实可访问的说明页面。当前尚未实现这些页面，不要编造已存在的 URL。
+- 隐私政策填写 `https://tcca.duckdns.org/privacy`，使用条款填写 `https://tcca.duckdns.org/terms`；这两个页面现已实现并发布。
 - 若控制台要求域名所有权验证，需要先完成可行的 Search Console 验证；免费子域名不等于已通过 Google 验证，也不代表一定不能用。
 
 显示自定义品牌与获取基本登录身份是不同的验证事项。正式发布前按控制台实际要求补齐主页、隐私说明、条款和品牌验证；不能承诺仅创建 OAuth 客户端就完成全部上线条件。
@@ -167,7 +167,7 @@ GOOGLE_CLIENT_SECRET=这里填写客户端Secret
 BETTER_AUTH_URL=https://tcca.duckdns.org
 ```
 
-这是未来接入配置示例。当前应用尚未读取这些认证配置，单独加到 `.env` 不会立即出现 Google 登录功能；部署时还要同步配置认证库、会话密钥及 Compose 环境变量传递。
+应用现已读取这些认证配置。还需配置稳定的 `BETTER_AUTH_SECRET`、`AI_CONFIG_ENCRYPTION_KEY`、站长邮箱及注册开关；完整字段见 `.env.example`，Compose 已传递这些变量。
 
 ### 8. 准备完成的判断
 
@@ -178,7 +178,7 @@ BETTER_AUTH_URL=https://tcca.duckdns.org
 - 正式 HTTPS 可访问后再联调。
 - 未填写不存在的隐私页面，也未把创建客户端误当成程序已接入。
 
-完成这些准备之后，应用侧还要实现 Google 登录、会话、角色、数据归属及迁移。当前访问预定的回调地址或 `/admin` 可能显示 404，这是尚未实现相应页面／接口，不是凭据一定填错。
+应用侧 Google 登录、会话、角色、数据归属及迁移现已完成。回调接口由 Google 授权流程访问，不应手工直接打开；`/admin` 仅允许已登录的站长账号使用。
 
 ## 多设备 Passkey 与后台设计确认
 
