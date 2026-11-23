@@ -11,7 +11,7 @@ export async function getUserSettings({ db, userId }: Pick<ApiContext, "db" | "u
   if (!doc) return defaultSettings();
   return { ...settingsSchema.parse(doc), version: Number(doc.version), saved: true };
 }
-export async function getUserAi(context: Pick<ApiContext, "db" | "userId" | "user">): Promise<AiCredentials> {
+export async function getUserAi(context: Pick<ApiContext, "db" | "userId">): Promise<AiCredentials> {
   const doc = await ownedCollection(context.db, context.userId, "user_ai_configs").findOne();
   if (!doc) throw new HttpError(422, "请先在设置中填写自己的 AI 配置；也可以手动录入或暂存文字。");
   return { baseUrl: doc.baseUrl, model: doc.model, apiKey: decryptAiKey(doc.encryptedKey, context.userId), trustedOrigin: configuredAiOrigin() };

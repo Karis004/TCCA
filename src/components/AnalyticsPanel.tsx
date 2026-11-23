@@ -55,7 +55,7 @@ export function AnalyticsPanel({ selectedMonth, onMonthChange, displayCurrency, 
         <div className="analytics-heading">
           <div>
             <p className="eyebrow">收支分析</p>
-            <h1>{periodName(selectedMonth)}</h1>
+            <h2>{periodName(selectedMonth)}</h2>
           </div>
           <div className="analytics-period-tools">
             <span className="period-count" role="status" aria-live="polite">{loading ? "正在更新…" : ready ? `${analytics.transactionCount} 笔记录` : ""}</span>

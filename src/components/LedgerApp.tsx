@@ -12,6 +12,7 @@ import { AccountSettings } from "@/components/AccountSettings";
 import { useSyncedSettings } from "@/lib/useSyncedSettings";
 import type { AppUser } from "@/lib/privateApi";
 import type { SettingsSnapshot } from "@/lib/userSettings";
+import type { ReportSummary } from "@/lib/reportTypes";
 import { PendingInputList } from "@/components/PendingInputList";
 import { mergePendingDrafts, pendingKey } from "@/lib/pendingInputs";
 import { changeDraft, identifyDrafts } from "@/lib/draftState";
@@ -22,6 +23,10 @@ import { categories as defaultCategories, paymentMethods as defaultPaymentMethod
 const AnalyticsPanel = dynamic(() => import("@/components/AnalyticsPanel").then(module => module.AnalyticsPanel), {
   loading: () => <section className="panel"><p className="hint">正在打开分析…</p></section>
 });
+const ReportsPanel = dynamic(() => import("@/components/ReportsPanel").then(module => module.ReportsPanel), {
+  loading: () => <p className="hint" role="status">正在打开报告…</p>
+});
+const reportsHash = "#reports";
 
 type Tab = "entry" | "analytics" | "records" | "settings";
 type PresetForm = { id?: string; name: string; draft: Draft };
@@ -130,6 +135,10 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   const setPaymentMethods = (value: PaymentMethod[]) => settingsSync.update({ paymentMethods: value });
   const setAnalysisCurrency = (value: AnalyticsDisplayCurrency) => settingsSync.update({ analysisCurrency: value });
   const [tab, setTab] = useState<Tab>("entry");
+  const [reportsOpen, setReportsOpen] = useState(false);
+  const [reportIssue, setReportIssue] = useState<ReportSummary | null>(null);
+  const [hasNewReport, setHasNewReport] = useState(false);
+  const analysisScroll = useRef<number | null>(null);
   const [text, setText] = useState("");
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [editingDraft, setEditingDraft] = useState<EditingDraft | null>(null);
@@ -171,6 +180,81 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   const pendingReads = useRef(0);
   const excludedCategories = useMemo(() => [...new Set(categories.filter((item) => item.includeInAnalytics === false).map((item) => item.name.trim()).filter(Boolean))].sort(), [categories]);
   const analyticsState = useAnalyticsData({ userId: user.id, month: selectedMonth, currency: analysisCurrency, excludedCategories: showAllCategories ? [] : excludedCategories }, true);
+
+  useEffect(() => {
+    const sync = () => {
+      const opened = window.location.hash === reportsHash;
+      if (opened) setTab("analytics");
+      else setReportIssue(null);
+      setReportsOpen(opened);
+    };
+    sync();
+    window.addEventListener("popstate", sync);
+    return () => window.removeEventListener("popstate", sync);
+  }, []);
+
+  useEffect(() => {
+    if (reportsOpen) window.scrollTo(0, 0);
+    else if (analysisScroll.current !== null) {
+      window.scrollTo(0, analysisScroll.current);
+      analysisScroll.current = null;
+    }
+  }, [reportsOpen]);
+
+  useEffect(() => {
+    if (tab !== "analytics" || reportsOpen || analyticsState.loading) return;
+    const controller = new AbortController();
+    let timer: number | undefined;
+    const scheduleCheck = () => {
+      window.clearTimeout(timer);
+      if (document.visibilityState === "visible") timer = window.setTimeout(() => {
+        fetch("/api/reports?unread=1", { cache: "no-store", signal: controller.signal, priority: "low" }).then(async response => {
+          if (!response.ok) return;
+          const { unread } = await response.json();
+          if (!controller.signal.aborted) setHasNewReport(Boolean(unread));
+        }).catch(() => {});
+      }, 600);
+    };
+    scheduleCheck();
+    document.addEventListener("visibilitychange", scheduleCheck);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", scheduleCheck);
+    };
+  }, [tab, reportsOpen, analyticsState.loading]);
+
+  function openReports() {
+    analysisScroll.current = window.scrollY;
+    window.history.pushState({ ...window.history.state, tccaReportEntry: true }, "", reportsHash);
+    setReportsOpen(true);
+  }
+
+  function closeReports() {
+    setReportIssue(null);
+    if (window.history.state?.tccaReportEntry) {
+      window.history.back();
+    } else {
+      window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+      setReportsOpen(false);
+    }
+  }
+
+  function selectReport(issue: ReportSummary | null) {
+    setReportIssue(issue);
+    window.scrollTo(0, 0);
+  }
+
+  function switchTab(next: Tab) {
+    if (reportsOpen && next !== "analytics") {
+      window.history.replaceState({ ...window.history.state, tccaReportEntry: undefined }, "", window.location.pathname + window.location.search);
+      analysisScroll.current = null;
+      setReportsOpen(false);
+      setReportIssue(null);
+      window.scrollTo(0, 0);
+    }
+    setTab(next);
+  }
 
   useEffect(() => {
     const loadCharts = () => { void import("@/components/AnalyticsPanel").catch(() => {}); };
@@ -633,13 +717,22 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
+        {tab === "entry" ? <div>
           <div className="brand">TCCA</div>
           <div className="tagline">一句话记账</div>
-        </div>
+        </div> : <div className="section-topbar">
+          {tab === "analytics" && reportsOpen ? (
+            <button type="button" className="text-button" onClick={() => reportIssue ? selectReport(null) : closeReports()}>{reportIssue ? "← 全部报告" : "← 返回分析"}</button>
+          ) : <>
+            <h1 className="section-title">{tabs.find(item => item.key === tab)?.label}</h1>
+            {tab === "analytics" ? (
+              <button type="button" className="text-button report-entry" onClick={openReports}>报告{hasNewReport ? <span className="report-dot" aria-label="有新报告" /> : null}</button>
+            ) : null}
+          </>}
+        </div>}
         <nav className="tabs desktop-tabs" aria-label="页面">
           {tabs.map((item) => (
-            <button key={item.key} className={`tab ${tab === item.key ? "active" : ""}`} onClick={() => setTab(item.key)}>
+            <button key={item.key} className={`tab ${tab === item.key ? "active" : ""}`} onClick={() => switchTab(item.key)}>
               {item.label}
             </button>
           ))}
@@ -765,7 +858,10 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
         </div>
       ) : null}
 
-      {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} displayCurrency={analysisCurrency} onCurrencyChange={setAnalysisCurrency} {...analyticsState} excludedCategories={excludedCategories} showAllCategories={showAllCategories} onShowAllCategories={setShowAllCategories} /> : null}
+      {tab === "analytics" ? <>
+        <div hidden={reportsOpen}><AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} displayCurrency={analysisCurrency} onCurrencyChange={setAnalysisCurrency} {...analyticsState} excludedCategories={excludedCategories} showAllCategories={showAllCategories} onShowAllCategories={setShowAllCategories} /></div>
+        {reportsOpen ? <ReportsPanel issue={reportIssue} onIssueChange={selectReport} /> : null}
+      </> : null}
 
       <TransactionRecords active={tab === "records"} categories={categories} paymentMethods={paymentMethods} revision={recordsRevision} onEdit={item => setEditingDraft(transactionToDraft(item))} onDelete={id => { void deleteTransaction(id); }} />
 
@@ -908,7 +1004,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
 
       <nav className="mobile-tabs" aria-label="移动端页面">
         {tabs.map((item) => (
-          <button key={item.key} className={tab === item.key ? "active" : ""} onClick={() => setTab(item.key)}>
+          <button key={item.key} className={tab === item.key ? "active" : ""} onClick={() => switchTab(item.key)}>
             {item.label}
           </button>
         ))}

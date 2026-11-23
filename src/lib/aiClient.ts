@@ -101,7 +101,7 @@ function parseErrorBody(body: string) {
   }
 }
 
-function parseAssistantJson(content: string) {
+function parseAssistantJson(content: string): unknown {
   const trimmed = content.trim();
   const withoutFence = trimmed
     .replace(/^```json\s*/i, "")
@@ -109,7 +109,11 @@ function parseAssistantJson(content: string) {
     .replace(/```$/i, "")
     .trim();
 
-  const raw = JSON.parse(withoutFence);
+  return JSON.parse(withoutFence);
+}
+
+function parseLedgerResponse(content: string) {
+  const raw = parseAssistantJson(content) as any;
   const candidates = Array.isArray(raw) ? raw : raw.transactions || raw.items || raw.data || [raw];
 
   if (!Array.isArray(candidates) || !candidates.length || candidates.length > 50) {
@@ -126,21 +130,27 @@ function parseAssistantJson(content: string) {
 }
 
 export async function parseLedgerText(input: string, options: ParseOptions = {}) {
-  const credentials = options.credentials;
-  const apiBaseUrl = credentials?.baseUrl;
-  const apiKey = credentials?.apiKey;
-  const model = credentials?.model;
-
-  if (!apiBaseUrl || !apiKey || !model) {
+  if (!options.credentials) {
     throw new Error("请先在设置中填写自己的 AI 配置。");
   }
 
   const today = options.referenceDate || ledgerToday();
   const prompt = buildLedgerPrompt(input, today, options);
+  return requestJsonAi(options.credentials, prompt, parseLedgerResponse, { temperature: 0, attempts: 2 });
+}
+
+export async function requestJsonAi<T>(
+  credentials: AiCredentials,
+  prompt: { system: string; user: string },
+  parse: (content: string) => T,
+  options: { temperature: number; attempts: number }
+) {
+  const { baseUrl, apiKey, model } = credentials;
+  if (!baseUrl || !apiKey || !model) throw new Error("请先在设置中填写自己的 AI 配置。");
   const requestBody = JSON.stringify({
     model,
     stream: false,
-    temperature: 0,
+    temperature: options.temperature,
     messages: [
       { role: "system", content: prompt.system },
       { role: "user", content: prompt.user }
@@ -150,13 +160,14 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
 
   let lastError: unknown;
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < options.attempts; attempt += 1) {
     try {
-      return await requestAndParseAi(getChatCompletionsUrl(apiBaseUrl), apiKey, requestBody, credentials!);
+      return parse(await requestAi(getChatCompletionsUrl(baseUrl), apiKey, requestBody, credentials));
     } catch (error) {
       lastError = error;
-      if (!(error instanceof AiRequestError) || !error.retryable || attempt === 1) {
-        throw new Error(redactAiError(error instanceof Error ? error.message : "AI 请求失败。", credentials!));
+      if (!(error instanceof AiRequestError) || !error.retryable || attempt === options.attempts - 1) {
+        const message = redactAiError(error instanceof Error ? error.message : "AI 请求失败。", credentials);
+        throw new AiRequestError(message, error instanceof AiRequestError && error.retryable);
       }
       await delay(900);
     }
@@ -165,7 +176,15 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
   throw lastError instanceof Error ? lastError : new Error("AI request failed.");
 }
 
-async function requestAndParseAi(url: string, apiKey: string, requestBody: string, credentials: AiCredentials) {
+export function validateAiJson<S extends z.ZodTypeAny>(schema: S) {
+  return (content: string): z.infer<S> => schema.parse(parseAssistantJson(content));
+}
+
+export function canRetryAi(error: unknown) {
+  return error instanceof AiRequestError && error.retryable;
+}
+
+async function requestAi(url: string, apiKey: string, requestBody: string, credentials: AiCredentials) {
   let response: { ok: boolean; status: number; text: string };
 
   try {
@@ -199,7 +218,8 @@ async function requestAndParseAi(url: string, apiKey: string, requestBody: strin
     throw new Error("AI returned empty content.");
   }
 
-  return parseAssistantJson(content);
+  if (typeof content !== "string") throw new Error("AI returned invalid content.");
+  return content;
 }
 
 async function postText(url: string, apiKey: string, requestBody: string, credentials: AiCredentials) {

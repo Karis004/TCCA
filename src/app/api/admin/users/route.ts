@@ -27,7 +27,7 @@ export const POST = privateRoute(async (request, ctx) => {
     if (!target.banned) throw new HttpError(409, "请先停用该用户，再处理其数据。");
     if (confirmation !== target.email) throw new HttpError(400, "请完整输入目标用户邮箱确认。");
     // Soft deletion allows recovery; no financial content is returned to the administrator.
-    for (const name of ["transactions", "transaction_presets", "pending_inputs"]) {
+    for (const name of ["transactions", "transaction_presets", "pending_inputs", "life_reports", "report_clues"]) {
       const col = ctx.db.collection(name);
       if (action === "clear") await col.updateMany({ userId, deletedAt: { $exists: false } }, { $set: { deletedAt: new Date() } });
       else if (action === "restore") await col.updateMany({ userId, deletedAt: { $exists: true } }, { $unset: { deletedAt: "" } });

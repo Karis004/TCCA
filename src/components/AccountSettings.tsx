@@ -94,8 +94,6 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
   }
 
   return <div className="settings-page">
-    <h1 className="settings-title">设置</h1>
-
     <section className="panel settings-block" aria-labelledby="ledger-settings-title">
       <h2 id="ledger-settings-title">记账偏好</h2>
       <label className="settings-preference-row">
@@ -136,6 +134,24 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
         </form>
         {user.role === "owner" && aiLoaded && !ai.configured ? <button className="text-button" disabled={aiBusy} onClick={() => { void aiAction("import-legacy"); }}>导入原 AI 配置</button> : null}
         {aiMessage ? <p className="settings-feedback" role="status">{aiMessage}</p> : null}
+      </div>
+    </details>
+
+    <details className="panel setting-group">
+      <summary><span>生活报告</span></summary>
+      <div className="setting-group-body">
+        <p className="hint">月报和季报在周期结束后自动生成。年报每年确认一次。报告使用你在上面配置的 AI 服务和额度。</p>
+        {([
+          ["month", "自动生成月报"],
+          ["quarter", "自动生成季报"],
+          ["year", "显示年报确认入口"],
+          ["includeOriginalText", "允许报告参考记账原文"]
+        ] as const).map(([key, label]) => (
+          <label className="settings-preference-row" key={key}>
+            <span>{label}</span>
+            <input type="checkbox" checked={settings.reports[key]} onChange={event => onChange({ reports: { ...settings.reports, [key]: event.target.checked } })} />
+          </label>
+        ))}
       </div>
     </details>
 
