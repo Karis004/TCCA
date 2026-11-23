@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import type { Category, TransactionDraft as DraftTransaction, PaymentMethod, TransactionInput } from "@/models/ledger";
 import { currencies } from "@/presets/ledger";
 
@@ -21,6 +21,22 @@ type Props = {
   showDate?: boolean;
 };
 
+const previewRequests = new Map<string, Promise<number>>();
+
+function loadPreviewRate(currency: string) {
+  const pending = previewRequests.get(currency);
+  if (pending) return pending;
+
+  const request = fetch(`/api/fx?currency=${encodeURIComponent(currency)}`).then(async response => {
+    if (!response.ok) throw new Error("FX request failed.");
+    const { rate } = await response.json();
+    if (typeof rate !== "number" || !Number.isFinite(rate) || rate <= 0) throw new Error("Invalid FX rate.");
+    return rate;
+  }).finally(() => previewRequests.delete(currency));
+  previewRequests.set(currency, request);
+  return request;
+}
+
 export function TransactionEditor({
   draft,
   categories,
@@ -37,45 +53,32 @@ export function TransactionEditor({
   onDiscard,
   showDate = true
 }: Props) {
-  const latestDraftRef = useRef({ draft, onChange });
+  const [preview, setPreview] = useState<{ currency: string; rate: number | null } | null>(null);
+  const currency = draft?.currency?.toUpperCase();
   const categoryOptionsId = idSuffix ? `category-options-${idSuffix}` : "category-options";
   const paymentMethodOptionsId = idSuffix ? `payment-method-options-${idSuffix}` : "payment-method-options";
 
   useEffect(() => {
-    latestDraftRef.current = { draft, onChange };
-  });
-
-  useEffect(() => {
-    if (!draft?.currency) return;
-
+    if (!currency || currency === "CNY") return;
     let cancelled = false;
-    const currency = draft.currency.toUpperCase();
-    const amount = Number(draft.amount || 0);
-
-    fetch(`/api/fx?currency=${encodeURIComponent(currency)}`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: { rate?: number } | null) => {
-        if (cancelled || !data?.rate) return;
-        const current = latestDraftRef.current.draft;
-        if (!current || current.currency?.toUpperCase() !== currency || Number(current.amount || 0) !== amount) return;
-
-        latestDraftRef.current.onChange({
-          ...current,
-          currency,
-          fxRateToCny: data.rate,
-          amountCny: Number((amount * data.rate).toFixed(2))
-        });
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, [draft?.currency, draft?.amount]);
+    setPreview(null);
+    loadPreviewRate(currency).then(rate => {
+      if (!cancelled) setPreview({ currency, rate });
+    }).catch(() => {
+      if (!cancelled) setPreview({ currency, rate: null });
+    });
+    return () => { cancelled = true; };
+  }, [currency]);
 
   if (!draft) return null;
+  const currentPreview = preview?.currency === currency ? preview : null;
+  const rate = currency === "CNY" ? 1 : currentPreview?.rate ?? draft.fxRateToCny;
 
   function update(key: keyof DraftTransaction, value: unknown) {
+    if (key === "currency" && draft) {
+      onChange({ ...draft, currency: value as string, fxRateToCny: undefined, amountCny: undefined });
+      return;
+    }
     onChange({ ...draft, [key]: value } as DraftTransaction);
   }
 
@@ -103,7 +106,7 @@ export function TransactionEditor({
         <span>{title}</span>
         <div className="panel-actions">{meta ? <span>{meta}</span> : null}{onDiscard ? <button type="button" className="text-button" disabled={saving} onClick={onDiscard}>删除这张</button> : null}</div>
       </div>
-      <div className="draft-total">约 ¥{draft.amountCny?.toFixed(2) || "0.00"}</div>
+      <div className="draft-total">{rate !== undefined ? `约 ¥${(Number(draft.amount || 0) * rate).toFixed(2)}` : currentPreview ? "暂时无法换算汇率" : "读取汇率中…"}</div>
       <form className="list" onSubmit={submit}>
         <div className="split">
           <div className="field">

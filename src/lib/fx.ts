@@ -6,18 +6,29 @@ type FxResponse = {
 };
 
 const cache = new Map<string, { rate: number; expiresAt: number }>();
+const inFlight = new Map<string, Promise<number>>();
+
+export function getCachedRateToCny(currency: string) {
+  const code = currency.toUpperCase();
+  if (code === "CNY" || code === "RMB") return 1;
+
+  const cached = cache.get(code);
+  return cached && cached.expiresAt > Date.now() ? cached.rate : undefined;
+}
 
 export async function getRateToCny(currency: string) {
   const code = currency.toUpperCase();
+  const cached = getCachedRateToCny(code);
+  if (cached !== undefined) return cached;
+  const pending = inFlight.get(code);
+  if (pending) return pending;
 
-  if (code === "CNY" || code === "RMB") {
-    return 1;
-  }
+  const request = fetchRateToCny(code).finally(() => inFlight.delete(code));
+  inFlight.set(code, request);
+  return request;
+}
 
-  const cached = cache.get(code);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.rate;
-  }
+async function fetchRateToCny(code: string) {
 
   const response = await fetch(getFxUrl(code), {
     next: { revalidate: 1800 }

@@ -4,30 +4,32 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Category, PaymentMethod, Transaction } from "@/models/ledger";
 
 type Props = {
+  active: boolean;
   categories: Category[];
   paymentMethods: PaymentMethod[];
-  revision: Transaction[];
+  revision: number;
   onEdit: (transaction: Transaction) => void;
   onDelete: (id: string) => void;
 };
 const ranges = { year: "近一年", half: "近半年", all: "全部时间" };
 
-export function TransactionRecords({ categories, paymentMethods, revision, onEdit, onDelete }: Props) {
+export function TransactionRecords({ active, categories, paymentMethods, revision, onEdit, onDelete }: Props) {
   const [text, setText] = useState("");
   const [queryText, setQueryText] = useState("");
   const [category, setCategory] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("");
   const [range, setRange] = useState<keyof typeof ranges>("year");
   const [expanded, setExpanded] = useState(false);
-  const [records, setRecords] = useState<Transaction[]>([]);
-  const [cursor, setCursor] = useState("");
+  const [page, setPage] = useState<{ query: string; records: Transaction[]; cursor: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [moreLoading, setMoreLoading] = useState(false);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [historicalOptions, setHistoricalOptions] = useState<{categories: string[]; paymentMethods: string[]}>({categories: [], paymentMethods: []});
   const generation = useRef(0);
+  const lastRequestAt = useRef(0);
   useEffect(() => {
+    if (!expanded) return;
     const controller = new AbortController();
     fetch(`/api/transactions?options=1&range=${range}`, { signal: controller.signal, cache: "no-store" }).then(async response => {
       if (!response.ok) return;
@@ -35,7 +37,7 @@ export function TransactionRecords({ categories, paymentMethods, revision, onEdi
       if (!controller.signal.aborted) setHistoricalOptions(options);
     }).catch(() => {});
     return () => controller.abort();
-  }, [range, revision]);
+  }, [expanded, range, revision]);
   useEffect(() => { const timer = setTimeout(() => setQueryText(text.trim()), 250); return () => clearTimeout(timer); }, [text]);
   const query = useMemo(() => {
     const params = new URLSearchParams({ range });
@@ -44,17 +46,37 @@ export function TransactionRecords({ categories, paymentMethods, revision, onEdi
     if (queryText) params.set("q", queryText);
     return params.toString();
   }, [range, category, paymentMethod, queryText]);
+  const visiblePage = page?.query === query ? page : null;
+  const records = visiblePage?.records ?? [];
+  const cursor = visiblePage?.cursor ?? "";
   useEffect(() => {
     const controller = new AbortController(); const current = ++generation.current;
-    setLoading(true); setMoreLoading(false); setError(""); setRecords([]); setCursor("");
+    lastRequestAt.current = Date.now();
+    setLoading(true); setMoreLoading(false); setError("");
     fetch(`/api/transactions?${query}`, { signal: controller.signal, cache: "no-store" }).then(async response => {
       const data = await response.json(); if (!response.ok) throw new Error(data.error || "搜索失败，请重试。");
       if (generation.current !== current || controller.signal.aborted) return;
-      setRecords(data); setCursor(response.headers.get("X-Next-Cursor") || "");
+      setPage({ query, records: data, cursor: response.headers.get("X-Next-Cursor") || "" });
     }).catch(e => { if (!controller.signal.aborted && generation.current === current) setError(e.message || "搜索失败。"); })
       .finally(() => { if (!controller.signal.aborted && generation.current === current) setLoading(false); });
     return () => { controller.abort(); generation.current = current + 1; };
   }, [query, revision, retry]);
+  useEffect(() => {
+    if (!active) return;
+    const revalidate = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastRequestAt.current >= 60_000) {
+        lastRequestAt.current = Date.now();
+        setRetry(value => value + 1);
+      }
+    };
+    revalidate();
+    window.addEventListener("focus", revalidate);
+    document.addEventListener("visibilitychange", revalidate);
+    return () => {
+      window.removeEventListener("focus", revalidate);
+      document.removeEventListener("visibilitychange", revalidate);
+    };
+  }, [active]);
   async function loadMore() {
     if (!cursor || loading || moreLoading) return;
     const current = generation.current; setMoreLoading(true); setError("");
@@ -62,14 +84,18 @@ export function TransactionRecords({ categories, paymentMethods, revision, onEdi
       const response = await fetch(`/api/transactions?${query}&cursor=${encodeURIComponent(cursor)}`, { cache: "no-store" });
       const data = await response.json(); if (!response.ok) throw new Error(data.error || "读取失败。");
       if (generation.current !== current) return;
-      setRecords(previous => { const ids = new Set(previous.map(item => item._id)); return [...previous, ...data.filter((item: Transaction) => !ids.has(item._id))]; });
-      setCursor(response.headers.get("X-Next-Cursor") || "");
+      setPage(previous => {
+        if (previous?.query !== query) return previous;
+        const ids = new Set(previous.records.map(item => item._id));
+        return { query, records: [...previous.records, ...data.filter((item: Transaction) => !ids.has(item._id))], cursor: response.headers.get("X-Next-Cursor") || "" };
+      });
     } catch (e) { if (generation.current === current) setError(e instanceof Error ? e.message : "读取失败。"); }
     finally { if (generation.current === current) setMoreLoading(false); }
   }
+  if (!active) return null;
   const activeFilters = Number(!!category) + Number(!!paymentMethod) + Number(range !== "year");
   return <section className="panel records-panel" aria-label="流水">
-    <div className="panel-head"><span>流水</span><span>{ranges[range]} · {loading ? "搜索中…" : `${records.length}${cursor ? "+" : ""} 条`}</span></div>
+    <div className="panel-head"><span>流水</span><span>{ranges[range]} · {loading && !visiblePage ? "搜索中…" : `${records.length}${cursor ? "+" : ""} 条`}</span></div>
     <div className="records-search-bar">
       <input className="input" type="search" aria-label="搜索备注或商户" placeholder="搜索备注或商户" maxLength={100} value={text} onChange={event => setText(event.target.value)} />
       <button className="text-button" type="button" aria-expanded={expanded} aria-controls="record-filters" onClick={() => setExpanded(!expanded)}>筛选{activeFilters ? ` · ${activeFilters}` : ""}</button>

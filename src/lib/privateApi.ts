@@ -14,6 +14,7 @@ export function privateRoute(handler: (request: Request, context: ApiContext) =>
     const requestId = randomUUID();
     const startedAt = Date.now();
     let resolvedContext: ApiContext | undefined;
+    let sessionHeaders: Headers | undefined;
     const recordFailure = async (status: number) => {
       if (status < 500) return;
       const event = { requestId, route: new URL(request.url).pathname, status, durationMs: Date.now() - startedAt, createdAt: new Date() };
@@ -23,24 +24,32 @@ export function privateRoute(handler: (request: Request, context: ApiContext) =>
     try {
       if (!["GET", "HEAD", "OPTIONS"].includes(request.method) && request.headers.get("origin") !== authOrigin()) throw new HttpError(403, "请求来源无效，请重新打开网站。");
       const auth = await getAuth();
-      const session = await auth.api.getSession({ headers: request.headers });
+      const { response: session, headers } = await auth.api.getSession({
+        headers: request.headers, query: { disableCookieCache: true }, returnHeaders: true
+      });
+      sessionHeaders = headers;
       if (!session?.user || !ObjectId.isValid(session.user.id)) throw new HttpError(401, "请先登录。");
+      // The database-backed session lookup reads the current user alongside the session.
+      if (session.user.banned) throw new HttpError(403, "账号已停用。");
       const db = await getDb();
-      // Check the authoritative user on every request; a stale cookie cannot bypass a ban.
-      const stored = await db.collection("user").findOne({ _id: new ObjectId(session.user.id) });
-      if (!stored || stored.banned) throw new HttpError(403, "账号已停用。");
-      const user: AppUser = { id: session.user.id, email: stored.email, name: stored.name || "", role: stored.role || "user" };
+      const { id, email, name, role } = session.user;
+      const user: AppUser = { id, email, name: name || "", role: role || "user" };
       resolvedContext = { db, user, userId: user.id, requestId };
+      const authDuration = Date.now() - startedAt;
       const response = await handler(request, resolvedContext);
       await recordFailure(response.status);
+      sessionHeaders?.getSetCookie().forEach(cookie => response.headers.append("Set-Cookie", cookie));
       response.headers.set("Cache-Control", "private, no-store");
       response.headers.set("X-Request-Id", requestId);
+      response.headers.append("Server-Timing", `auth;dur=${authDuration}, app;dur=${Date.now() - startedAt - authDuration}`);
       return response;
     } catch (error) {
       const status = error instanceof HttpError ? error.status : error instanceof z.ZodError ? 400 : 500;
       const message = error instanceof HttpError ? error.message : error instanceof z.ZodError ? error.issues[0]?.message || "输入无效。" : "操作失败，请稍后重试。";
       await recordFailure(status);
-      return NextResponse.json({ error: message, requestId }, { status, headers: { "Cache-Control": "private, no-store" } });
+      const response = NextResponse.json({ error: message, requestId }, { status, headers: { "Cache-Control": "private, no-store" } });
+      sessionHeaders?.getSetCookie().forEach(cookie => response.headers.append("Set-Cookie", cookie));
+      return response;
     }
   };
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { authClient } from "@/lib/auth-client";
+import { authClient, signOutLedger } from "@/lib/auth-client";
 import { clearAnalytics } from "@/lib/useAnalyticsData";
 import { currencies } from "@/presets/ledger";
 import type { AppUser } from "@/lib/privateApi";
@@ -169,7 +169,7 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
       </details>
       <div className="settings-section-footer settings-account-actions">
         {user.role === "owner" ? <Link className="text-button" href="/admin">管理用户</Link> : null}
-        <button className="text-button" onClick={() => { clearAnalytics(); void authClient.signOut().then(() => { localStorage.removeItem(`tcca-settings:${user.id}`); window.location.reload(); }); }}>退出登录</button>
+        <button className="text-button" onClick={() => { clearAnalytics(); localStorage.removeItem(`tcca-settings:${user.id}`); void signOutLedger(); }}>退出登录</button>
       </div>
     </section>
   </div>;

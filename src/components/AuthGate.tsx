@@ -1,34 +1,76 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { authClient } from "@/lib/auth-client";
+import { getGlobalBroadcastChannel } from "better-auth/client";
+import { authClient, signOutLedger } from "@/lib/auth-client";
 import { clearAnalytics } from "@/lib/useAnalyticsData";
 import type { AppUser } from "@/lib/privateApi";
 import type { SettingsSnapshot } from "@/lib/userSettings";
 
+type LedgerAccount = { user: AppUser; settings: SettingsSnapshot };
+
 export function AuthGate({ children }: { children: (user: AppUser, settings: SettingsSnapshot) => React.ReactNode }) {
-  const session = authClient.useSession();
-  const [account, setAccount] = useState<{ user: AppUser; settings: SettingsSnapshot } | null>(null);
+  const [account, setAccount] = useState<LedgerAccount | null>(null);
+  const [pending, setPending] = useState(true);
+  const [banned, setBanned] = useState(false);
+  const checkNow = useRef<() => void>(() => {});
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   useEffect(() => {
-    setAccount(null); setError(""); clearAnalytics();
-    if (!session.data?.user.id) return;
-    let active = true; const controller = new AbortController();
+    let controller: AbortController | null = null;
+    let userId: string | undefined;
+    let lastChecked = 0;
+    function changeAccount(next: LedgerAccount | null) {
+      if (userId && userId !== next?.user.id) clearAnalytics();
+      userId = next?.user.id;
+      setAccount(next);
+    }
     const load = async () => {
+      if (controller) return;
+      const request = new AbortController();
+      controller = request;
+      lastChecked = Date.now();
       try {
-        const responses = await Promise.all([fetch("/api/me", { signal: controller.signal, cache: "no-store" }), fetch("/api/settings", { signal: controller.signal, cache: "no-store" })]);
-        const [user, settings] = await Promise.all(responses.map(r => r.json()));
-        if (!active) return;
-        if (!responses.every(r => r.ok)) { setAccount(null); throw new Error(user.error || settings.error || "暂时无法读取账户。"); }
-        setAccount({ user, settings }); setError("");
-      } catch (e) { if (active) setError(e instanceof Error ? e.message : "登录状态读取失败。"); }
+        const response = await fetch("/api/me?settings=1", { signal: request.signal, cache: "no-store" });
+        const data = await response.json();
+        if (request.signal.aborted) return;
+        if (response.status === 401 || response.status === 403) {
+          changeAccount(null);
+          setBanned(response.status === 403);
+          setError(response.status === 403 ? data.error : "");
+          return;
+        }
+        if (!response.ok) throw new Error(data.error || "暂时无法读取账户。");
+        setBanned(false);
+        changeAccount(data);
+        setError("");
+      } catch (e) {
+        if (!request.signal.aborted && !userId) setError(e instanceof Error ? e.message : "登录状态读取失败。");
+      } finally {
+        if (!request.signal.aborted) { controller = null; setPending(false); }
+      }
     };
+    checkNow.current = () => { setPending(true); void load(); };
+    const revalidate = () => { if (document.visibilityState === "visible" && Date.now() - lastChecked > 30_000) void load(); };
+    const broadcasts = getGlobalBroadcastChannel();
+    const stopListening = broadcasts.setup();
+    const unsubscribe = broadcasts.subscribe(message => {
+      controller?.abort();
+      controller = null;
+      if (message.data?.trigger === "signout") { changeAccount(null); setBanned(false); setError(""); }
+      void load();
+    });
     void load();
-    const timer = setInterval(() => { void authClient.getSession().then(() => load()).catch(() => {}); }, 5 * 60 * 1000);
-    return () => { active = false; controller.abort(); clearInterval(timer); };
-  }, [session.data?.user.id]);
-  if (session.isPending || (session.data && !account && !error)) return <main className="app-shell"><section className="panel login-panel"><div className="brand">TCCA</div><p className="hint">正在打开账本…</p></section></main>;
-  if (account && account.user.id === session.data?.user.id) return <>{children(account.user, account.settings)}</>;
+    const timer = setInterval(revalidate, 5 * 60 * 1000);
+    document.addEventListener("visibilitychange", revalidate);
+    window.addEventListener("focus", revalidate);
+    return () => {
+      controller?.abort(); clearInterval(timer); stopListening(); unsubscribe();
+      document.removeEventListener("visibilitychange", revalidate);
+      window.removeEventListener("focus", revalidate);
+    };
+  }, []);
+  if (account) return <>{children(account.user, account.settings)}</>;
+  if (pending) return <main className="app-shell"><section className="panel login-panel"><div className="brand">TCCA</div><p className="hint">正在打开账本…</p></section></main>;
   async function login(method: "google" | "passkey") {
     setBusy(true); setError("");
     try {
@@ -43,6 +85,6 @@ export function AuthGate({ children }: { children: (user: AppUser, settings: Set
     <button className="primary-button" disabled={busy} onClick={() => { void login("google"); }}>使用 Google 登录</button>
     <button className="text-button" disabled={busy} onClick={() => { void login("passkey"); }}>使用通行密钥登录</button>
     <div className="account-links"><Link href="/privacy">隐私说明</Link><Link href="/terms">使用条款</Link></div>
-    {session.data ? <button className="text-button" onClick={() => { void authClient.signOut().then(() => window.location.reload()); }}>退出当前账号</button> : null}
+    {banned ? <button className="text-button" onClick={() => { void signOutLedger(); }}>退出当前账号</button> : error ? <button className="text-button" disabled={busy} onClick={() => checkNow.current()}>重试打开账本</button> : null}
   </section></main>;
 }

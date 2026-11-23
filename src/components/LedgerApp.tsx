@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnalyticsPanel } from "@/components/AnalyticsPanel";
+import dynamic from "next/dynamic";
 import { getCurrentMonth } from "@/lib/analytics";
 import type { AnalyticsDisplayCurrency } from "@/lib/analytics";
 import { invalidateAnalytics, useAnalyticsData } from "@/lib/useAnalyticsData";
@@ -18,6 +18,10 @@ import { changeDraft, identifyDrafts } from "@/lib/draftState";
 import { ledgerToday, presetToDraft, suggestPresetName } from "@/lib/transactionPresets";
 import type { Category, TransactionDraft as Draft, PaymentMethod, Transaction, TransactionInput, TransactionPreset, PendingInput } from "@/models/ledger";
 import { categories as defaultCategories, paymentMethods as defaultPaymentMethods } from "@/presets/ledger";
+
+const AnalyticsPanel = dynamic(() => import("@/components/AnalyticsPanel").then(module => module.AnalyticsPanel), {
+  loading: () => <section className="panel"><p className="hint">正在打开分析…</p></section>
+});
 
 type Tab = "entry" | "analytics" | "records" | "settings";
 type PresetForm = { id?: string; name: string; draft: Draft };
@@ -130,6 +134,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [editingDraft, setEditingDraft] = useState<EditingDraft | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [recordsRevision, setRecordsRevision] = useState(0);
   const [transactionPresets, setTransactionPresets] = useState<TransactionPreset[]>([]);
   const [presetsLoading, setPresetsLoading] = useState(true);
   const [presetError, setPresetError] = useState("");
@@ -163,8 +168,19 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   const [pendingEdit, setPendingEdit] = useState<PendingInput | null>(null);
   const [pendingEditError, setPendingEditError] = useState("");
   const pendingLock = useRef(false);
+  const pendingReads = useRef(0);
   const excludedCategories = useMemo(() => [...new Set(categories.filter((item) => item.includeInAnalytics === false).map((item) => item.name.trim()).filter(Boolean))].sort(), [categories]);
   const analyticsState = useAnalyticsData({ userId: user.id, month: selectedMonth, currency: analysisCurrency, excludedCategories: showAllCategories ? [] : excludedCategories }, true);
+
+  useEffect(() => {
+    const loadCharts = () => { void import("@/components/AnalyticsPanel").catch(() => {}); };
+    if ("requestIdleCallback" in window) {
+      const id = window.requestIdleCallback(loadCharts, { timeout: 2000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const timer = setTimeout(loadCharts, 1500);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     if (!message) return;
@@ -173,15 +189,17 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   }, [message]);
 
   const loadPendingInputs = useCallback(async () => {
+    const read = ++pendingReads.current;
     setPendingError("");
     try {
       const response = await fetch("/api/pending-inputs");
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "读取暂存文字失败。");
+      if (read !== pendingReads.current) return;
       setPendingInputs(data);
       setDrafts((current) => identifyDrafts(mergePendingDrafts(current, data)));
-    } catch (err) { setPendingError(err instanceof Error ? err.message : "读取暂存文字失败。"); }
-    finally { setPendingLoading(false); }
+    } catch (err) { if (read === pendingReads.current) setPendingError(err instanceof Error ? err.message : "读取暂存文字失败。"); }
+    finally { if (read === pendingReads.current) setPendingLoading(false); }
   }, []);
   useEffect(() => { void loadPendingInputs(); }, [loadPendingInputs]);
 
@@ -258,23 +276,15 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     } finally { setPendingBusy(false); pendingLock.current = false; }
   }
 
-  async function refresh() {
-    const response = await fetch("/api/transactions");
-    if (!response.ok) throw new Error("读取数据失败，请检查 MongoDB 配置。");
-    setTransactions(await response.json());
-  }
-
   useEffect(() => {
-(async () => {
-      try {
-        const response = await fetch("/api/transactions");
-        if (!response.ok) throw new Error("读取数据失败，请检查 MongoDB 配置。");
-        setTransactions(await response.json());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "读取数据失败。");
-      }
-    })();
-  }, []);
+    const controller = new AbortController();
+    fetch("/api/transactions", { signal: controller.signal }).then(async response => {
+      if (!response.ok) return;
+      const data = await response.json();
+      if (!controller.signal.aborted) setTransactions(data);
+    }).catch(() => {});
+    return () => controller.abort();
+  }, [recordsRevision]);
 
   const loadTransactionPresets = useCallback(async () => {
     setPresetsLoading(true);
@@ -359,27 +369,22 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   }
 
   async function parseText() {
-    if (!text.trim()) return;
+    if (loading || !text.trim()) return;
+    const submittedText = text;
     setLoading(true);
-    setError("");
-    setMessage("");
     setParseError("");
 
     try {
       const response = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          categories: categories.map((item) => item.name),
-          paymentMethods: paymentMethods.map((item) => item.name)
-        })
+        body: JSON.stringify({ text: submittedText })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "识别失败。");
       const recognized = identifyDrafts(getDraftsFromParseResponse(data));
       setDrafts((current) => [...current.filter((item) => item.amount || item.category || item.paymentMethod || item.note || item.originalText), ...recognized]);
-      setText("");
+      setText(current => current === submittedText ? "" : current);
       setDraftRevision((value) => value + 1);
     } catch (err) {
       setParseError(err instanceof Error ? err.message : "识别失败。");
@@ -408,16 +413,29 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     setDraftRevision((value) => value + 1);
   }
 
-  async function createTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draft?: Draft, invalidate = true) {
+  async function createTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draft: Draft) {
     const response = await fetch("/api/transactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, pendingInputId: draft?.pendingInputId, pendingDraftId: draft?.pendingDraftId })
+      body: JSON.stringify({ ...payload, pendingInputId: draft.pendingInputId, pendingDraftId: draft.pendingDraftId })
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "保存失败。");
-    if (invalidate) invalidateAnalytics();
-    return data;
+    setDrafts(current => changeDraft(current, draft.localDraftId!, null));
+    if (draft.pendingInputId && draft.pendingDraftId) {
+      pendingReads.current++;
+      setPendingLoading(false);
+      setPendingInputs(current => current.flatMap(input => {
+        if (input._id !== draft.pendingInputId) return [input];
+        const remaining = input.drafts.filter(item => item.pendingDraftId !== draft.pendingDraftId);
+        return remaining.length ? [{ ...input, drafts: remaining }] : [];
+      }));
+    }
+  }
+
+  function refreshAfterWrite() {
+    setRecordsRevision(value => value + 1);
+    invalidateAnalytics();
   }
 
   async function saveTransaction(payload: Omit<TransactionInput, "amountCny" | "fxRateToCny">, draftId: string) {
@@ -429,10 +447,8 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
 
     try {
       await createTransaction(payload, draft);
-      setDrafts((current) => changeDraft(current, draftId, null));
       setMessage("账单已录入。");
-      await refresh();
-      await loadPendingInputs();
+      refreshAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败。");
     } finally {
@@ -451,19 +467,18 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     setError("");
     setMessage("");
 
+    let saved = 0;
     try {
       const batch = [...drafts];
       for (const item of batch) {
-        await createTransaction(draftToPayload(item), item, false);
-        setDrafts((current) => changeDraft(current, item.localDraftId!, null));
+        await createTransaction(draftToPayload(item), item);
+        saved++;
       }
-      setMessage(`${drafts.length} 张账单已录入。`);
-      await refresh();
+      setMessage(`${saved} 张账单已录入。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败。");
     } finally {
-      invalidateAnalytics();
-      await loadPendingInputs();
+      if (saved) refreshAfterWrite();
       setSaving(false);
     }
   }
@@ -483,11 +498,10 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "保存失败。");
 
-      invalidateAnalytics();
       setTransactions((current) => current.map((item) => (item._id === data._id ? data : item)));
       setEditingDraft(null);
       setMessage("账单已更新。");
-      await refresh();
+      refreshAfterWrite();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存失败。");
     } finally {
@@ -505,12 +519,11 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
       const response = await fetch(`/api/transactions?id=${id}`, { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "删除失败。");
-      invalidateAnalytics();
       if (editingDraft?._id === id) {
         setEditingDraft(null);
       }
       setMessage("账单已删除。");
-      await refresh();
+      refreshAfterWrite();
     } catch (err) {
       setTransactions(previous);
       setError(err instanceof Error ? err.message : "删除失败。");
@@ -658,7 +671,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
               />
               <div className="action-row">
                 <button type="button" className="text-button" disabled={loading || pendingSaving || !text.trim()} onClick={savePendingText}>{pendingSaving ? "暂存中…" : "暂存文字"}</button>
-                <button className="primary-button" disabled={loading || saving || pendingBusy || pendingSaving || !text.trim()} onClick={parseText}>
+                <button className="primary-button" disabled={loading || pendingBusy || pendingSaving || !text.trim()} onClick={parseText}>
                   {loading ? "识别中..." : "识别账单"}
                 </button>
               </div>
@@ -754,7 +767,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
 
       {tab === "analytics" ? <AnalyticsPanel selectedMonth={selectedMonth} onMonthChange={setSelectedMonth} displayCurrency={analysisCurrency} onCurrencyChange={setAnalysisCurrency} {...analyticsState} excludedCategories={excludedCategories} showAllCategories={showAllCategories} onShowAllCategories={setShowAllCategories} /> : null}
 
-      {tab === "records" ? <TransactionRecords categories={categories} paymentMethods={paymentMethods} revision={transactions} onEdit={item => setEditingDraft(transactionToDraft(item))} onDelete={id => { void deleteTransaction(id); }} /> : null}
+      <TransactionRecords active={tab === "records"} categories={categories} paymentMethods={paymentMethods} revision={recordsRevision} onEdit={item => setEditingDraft(transactionToDraft(item))} onDelete={id => { void deleteTransaction(id); }} />
 
       {tab === "settings" ? (
         <AccountSettings

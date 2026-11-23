@@ -58,6 +58,11 @@ try {
   for (const route of ['/api/transactions', '/api/analytics', '/api/pending-inputs', '/api/transaction-presets', '/api/settings', '/api/ai-config', '/api/export', '/api/admin/users']) check((await call(null, route)).status === 401, 'anonymous blocked ' + route);
   check((await call({ cookie: cookieFor('invalid-token') }, '/api/me')).status === 401, 'forged session rejected');
   check((await call(a, '/api/me')).data.id === a.id, 'real signed session resolves correct owner');
+  check((await call(null, '/api/me?settings=1')).status === 401, 'anonymous bootstrap rejected');
+  await db.collection('session').updateOne({ token: a.token }, { $set: { expiresAt: new Date(Date.now() + 363 * 86400000), updatedAt: new Date(Date.now() - 2 * 86400000) } });
+  const bootstrap = await call(a, '/api/me?settings=1');
+  check(bootstrap.data.user?.id === a.id && bootstrap.data.settings?.defaultCurrency === 'HKD', 'bootstrap returns the authenticated account and its settings together');
+  check(bootstrap.response.headers.getSetCookie().some(cookie => cookie.startsWith('better-auth.session_token=')), 'bootstrap forwards session renewal cookies');
   await call(a, '/api/auth/update-user', 'POST', { role: 'owner', banned: false });
   check((await db.collection('user').findOne({ _id: new ObjectId(a.id) })).role === 'user', 'client cannot grant itself owner role');
   const bill = { type: 'expense', amount: 12.5, currency: 'CNY', date: '2026-11-07', category: '交通', paymentMethod: '现金', tags: [], note: null };

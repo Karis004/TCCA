@@ -3,7 +3,7 @@ import { MongoClient } from "mongodb";
 const options = {
   maxPoolSize: 10,
   minPoolSize: 0,
-  maxIdleTimeMS: 30000
+  maxIdleTimeMS: 5 * 60 * 1000
 };
 
 const globalWithMongo = global as typeof globalThis & {
