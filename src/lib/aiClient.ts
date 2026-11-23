@@ -203,7 +203,7 @@ async function requestAndParseAi(url: string, apiKey: string, requestBody: strin
 }
 
 async function postText(url: string, apiKey: string, requestBody: string, credentials: AiCredentials) {
-  const checked = await resolveAiTarget(url, credentials.ownerLegacyOrigin);
+  const checked = await resolveAiTarget(url, credentials.trustedOrigin);
   return new Promise<{ ok: boolean; status: number; text: string }>((resolve, reject) => {
     const target = checked.target;
     const transport = target.protocol === "http:" ? http : https;

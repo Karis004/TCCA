@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { ObjectId } from 'mongodb';
-import { isPublicAddress, resolveAiTarget, encryptAiKey, decryptAiKey, redactAiError } from '../src/lib/aiSecurity.ts';
+import { configuredAiOrigin, isPublicAddress, resolveAiTarget, encryptAiKey, decryptAiKey, redactAiError } from '../src/lib/aiSecurity.ts';
 import { compareBaseline } from '../scripts/ledger-data.mjs';
 import { resolveCurrency } from '../src/lib/currency.ts';
 import { ownedCollection } from '../src/lib/ownership.ts';
@@ -21,10 +21,34 @@ test('DNS pinning rejects mixed public/private records and returns the checked a
   const checked = await resolveAiTarget('https://example.com/v1', undefined, async () => { lookups++; return [{ address: '1.1.1.1', family: 4 }]; });
   assert.equal(checked.address.address, '1.1.1.1'); assert.equal(lookups, 1);
 });
-test('legacy internal API exception is limited to exactly the configured origin', async () => {
+test('trusted internal API exception is limited to exactly the configured origin', async () => {
   const target = await resolveAiTarget('http://127.0.0.1:8317/v1', 'http://127.0.0.1:8317');
   assert.equal(target.target.origin, 'http://127.0.0.1:8317');
   await assert.rejects(resolveAiTarget('http://127.0.0.1:8318/v1', 'http://127.0.0.1:8317'));
+});
+
+test('server-configured Tailscale API is available independently of account role', async () => {
+  const previous = process.env.AI_API_BASE_URL;
+  try {
+    process.env.AI_API_BASE_URL = 'https://cpa.example.ts.net/v1';
+    const lookup = async () => [{ address: '100.77.107.46', family: 4 }];
+    const origin = configuredAiOrigin();
+    assert.equal(origin, 'https://cpa.example.ts.net');
+    const checked = await resolveAiTarget('https://cpa.example.ts.net/v1/chat/completions', origin, lookup);
+    assert.equal(checked.address.address, '100.77.107.46');
+    await assert.rejects(resolveAiTarget('https://cpa.example.ts.net:8443/v1', origin, lookup));
+    await assert.rejects(resolveAiTarget('https://other.example.ts.net/v1', origin, lookup));
+    await assert.rejects(resolveAiTarget('https://cpa.example.ts.net.attacker.example/v1', origin, lookup));
+    await assert.rejects(resolveAiTarget('http://cpa.example.ts.net/v1', origin, lookup));
+    delete process.env.AI_API_BASE_URL;
+    assert.equal(configuredAiOrigin(), undefined);
+    await assert.rejects(resolveAiTarget('https://cpa.example.ts.net/v1', configuredAiOrigin(), lookup));
+    process.env.AI_API_BASE_URL = 'invalid';
+    assert.equal(configuredAiOrigin(), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.AI_API_BASE_URL;
+    else process.env.AI_API_BASE_URL = previous;
+  }
 });
 test('encrypted keys are bound to their user and tampering is rejected', () => {
   process.env.AI_CONFIG_ENCRYPTION_KEY = crypto.randomBytes(32).toString('base64');

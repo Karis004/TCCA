@@ -2,7 +2,11 @@ import dns from "node:dns/promises";
 import ipaddr from "ipaddr.js";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 
-export type AiCredentials = { baseUrl: string; apiKey: string; model: string; ownerLegacyOrigin?: string };
+export type AiCredentials = { baseUrl: string; apiKey: string; model: string; trustedOrigin?: string };
+export function configuredAiOrigin() {
+  if (!process.env.AI_API_BASE_URL) return undefined;
+  try { return new URL(normalizeAiUrl(process.env.AI_API_BASE_URL)).origin; } catch { return undefined; }
+}
 export function isPublicAddress(value: string) {
   try { return ipaddr.process(value).range() === "unicast"; } catch { return false; }
 }
@@ -12,15 +16,15 @@ export function normalizeAiUrl(value: string) {
   if (!["https:", "http:"].includes(url.protocol)) throw new Error("API URL 协议无效。");
   return url.toString().replace(/\/$/, "");
 }
-export async function resolveAiTarget(value: string, ownerLegacyOrigin?: string, lookup = dns.lookup) {
+export async function resolveAiTarget(value: string, trustedOrigin?: string, lookup = dns.lookup) {
   const target = new URL(normalizeAiUrl(value));
-  const legacy = !!ownerLegacyOrigin && target.origin === ownerLegacyOrigin;
-  if (target.protocol !== "https:" && !legacy) throw new Error("API 地址需要使用 HTTPS。");
+  const trusted = !!trustedOrigin && target.origin === trustedOrigin;
+  if (target.protocol !== "https:" && !trusted) throw new Error("API 地址需要使用 HTTPS。");
   const hostname = target.hostname.replace(/^\[|\]$/g, "");
   const addresses = ipaddr.isValid(hostname)
     ? [{ address: hostname, family: ipaddr.parse(hostname).kind() === "ipv4" ? 4 : 6 }]
     : await lookup(hostname, { all: true, verbatim: false });
-  if (!addresses.length || (!legacy && addresses.some(item => !isPublicAddress(item.address)))) throw new Error("API 地址不能指向本机、内网或保留网络。");
+  if (!addresses.length || (!trusted && addresses.some(item => !isPublicAddress(item.address)))) throw new Error("API 地址不能指向本机、内网或保留网络。");
   // Pin the checked address for this connection; a second DNS lookup cannot rebind it.
   return { target, address: addresses.find(item => item.family === 4) || addresses[0] };
 }

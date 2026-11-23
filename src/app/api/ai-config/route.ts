@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { privateRoute, rateLimit, readJson, HttpError, requireOwner } from "@/lib/privateApi";
 import { ownedCollection } from "@/lib/ownership";
-import { normalizeAiUrl, encryptAiKey, decryptAiKey, resolveAiTarget } from "@/lib/aiSecurity";
-import { getUserAi, ownerLegacyOrigin } from "@/lib/userData";
+import { configuredAiOrigin, normalizeAiUrl, encryptAiKey, decryptAiKey, resolveAiTarget } from "@/lib/aiSecurity";
+import { getUserAi } from "@/lib/userData";
 import { parseLedgerText } from "@/lib/aiClient";
 
 const schema = z.object({ baseUrl: z.string().trim().url().max(1000), model: z.string().trim().min(1).max(160), apiKey: z.string().trim().min(1).max(8192).optional() });
@@ -12,7 +12,7 @@ export const GET = privateRoute(async (_request, ctx) => NextResponse.json(summa
 export const PUT = privateRoute(async (request, ctx) => {
   await rateLimit(ctx.db, ctx.userId, "ai-config", 10);
   const body = await readJson(request, schema); const baseUrl = normalizeAiUrl(body.baseUrl);
-  try { await resolveAiTarget(baseUrl, ownerLegacyOrigin(ctx.user.role)); } catch { throw new HttpError(400, "API 地址必须可解析到公开 HTTPS 服务；不支持本机、内网或保留地址。"); }
+  try { await resolveAiTarget(baseUrl, configuredAiOrigin()); } catch { throw new HttpError(400, "API 地址须能解析到公网 HTTPS 服务或站长配置的 API 服务。"); }
   const collection = ownedCollection(ctx.db, ctx.userId, "user_ai_configs"); const current = await collection.findOne();
   if (!body.apiKey && !current) throw new HttpError(400, "请填写 API Key。");
   // A blank replacement key is valid only when the destination is unchanged.

@@ -90,6 +90,12 @@ try {
   check((await call(b, '/api/settings')).data.defaultCurrency === 'HKD', 'settings isolated');
   check((await call(a, '/api/parse', 'POST', { text: '今天花了12块' })).status === 422, 'no shared fallback AI key');
   check((await call(a, '/api/ai-config', 'POST', { action: 'import-legacy' })).status === 403, 'ordinary user cannot import owner AI credentials');
+  if (process.env.AI_API_BASE_URL) {
+    const trusted = await call(a, '/api/ai-config', 'PUT', { baseUrl: process.env.AI_API_BASE_URL, model: 'test-model', apiKey: 'integration-secret-' + stamp });
+    check(trusted.status === 200 && trusted.data.configured, 'ordinary user can save server-configured API endpoint');
+    check(!(await call(b, '/api/ai-config')).data.configured, 'trusted endpoint still uses per-user configuration');
+    check((await call(a, '/api/ai-config', 'POST', { action: 'reveal' })).data.apiKey === 'integration-secret-' + stamp, 'trusted endpoint saves the user-supplied key');
+  }
   const aiSaved = await call(a, '/api/ai-config', 'PUT', { baseUrl: 'https://example.com/v1', model: 'test-model', apiKey: 'integration-secret-' + stamp });
   check(aiSaved.status === 200 && !JSON.stringify(aiSaved.data).includes('integration-secret'), 'AI config masked');
   check(!(await call(b, '/api/ai-config')).data.configured, 'AI config isolation');
