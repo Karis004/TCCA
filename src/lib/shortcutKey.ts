@@ -1,8 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Db } from "mongodb";
+import { decryptAiKey } from "./aiSecurity";
 
 export function shortcutKeys(db: Db) {
-  return db.collection<{ _id: string; digest: string; createdAt: Date }>("shortcut_keys");
+  return db.collection<{ _id: string; digest: string; encryptedToken?: string; createdAt: Date }>("shortcut_keys");
+}
+
+export async function getShortcutConfiguration(db: Db, userId: string) {
+  const key = await shortcutKeys(db).findOne({ _id: userId });
+  return { configured: Boolean(key), token: key?.encryptedToken ? decryptAiKey(key.encryptedToken, userId) : "" };
 }
 
 export function shortcutDigest(secret: string) {

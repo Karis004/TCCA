@@ -19,6 +19,7 @@ type Props = {
   onSavePreset?: (draft: DraftTransaction) => void;
   onDiscard?: () => void;
   showDate?: boolean;
+  allowHistoricalChoices?: boolean;
 };
 
 const previewRequests = new Map<string, Promise<number>>();
@@ -45,18 +46,16 @@ export function TransactionEditor({
   onChange,
   onSave,
   saving,
-  idSuffix = "",
   title = "待确认账单",
   meta,
   saveLabel = "确认录入",
   onSavePreset,
   onDiscard,
-  showDate = true
+  showDate = true,
+  allowHistoricalChoices = false
 }: Props) {
   const [preview, setPreview] = useState<{ currency: string; rate: number | null } | null>(null);
   const currency = draft?.currency?.toUpperCase();
-  const categoryOptionsId = idSuffix ? `category-options-${idSuffix}` : "category-options";
-  const paymentMethodOptionsId = idSuffix ? `payment-method-options-${idSuffix}` : "payment-method-options";
 
   useEffect(() => {
     if (!currency || currency === "CNY") return;
@@ -71,6 +70,13 @@ export function TransactionEditor({
   }, [currency]);
 
   if (!draft) return null;
+  const categoryNames = [...new Set(categories.map(item => item.name).filter(Boolean))];
+  const paymentNames = [...new Set(paymentMethods.map(item => item.name).filter(Boolean))];
+  if (allowHistoricalChoices && draft.category && !categoryNames.includes(draft.category)) categoryNames.push(draft.category);
+  if (allowHistoricalChoices && draft.paymentMethod && !paymentNames.includes(draft.paymentMethod)) paymentNames.push(draft.paymentMethod);
+  const selectedCategory = categoryNames.includes(draft.category ?? "") ? draft.category! : "";
+  const selectedPayment = paymentNames.includes(draft.paymentMethod ?? "") ? draft.paymentMethod! : "";
+  const validChoices = Boolean(selectedCategory && selectedPayment);
   const currentPreview = preview?.currency === currency ? preview : null;
   const rate = currency === "CNY" ? 1 : currentPreview?.rate ?? draft.fxRateToCny;
 
@@ -84,15 +90,15 @@ export function TransactionEditor({
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!draft) return;
+    if (!draft || !validChoices) return;
 
     onSave({
       type: draft.type,
       amount: Number(draft.amount || 0),
       currency: (draft.currency || "HKD").toUpperCase(),
       date: draft.date || new Date().toISOString().slice(0, 10),
-      category: draft.category?.trim() || "未分类",
-      paymentMethod: draft.paymentMethod?.trim() || "未指定",
+      category: selectedCategory,
+      paymentMethod: selectedPayment,
       merchant: draft.merchant,
       tags: draft.tags || [],
       note: draft.note,
@@ -144,21 +150,17 @@ export function TransactionEditor({
         <div className="split">
           <div className="field">
             <label>分类</label>
-            <input className="input" aria-label="分类" list={categoryOptionsId} value={draft.category || ""} onChange={(event) => update("category", event.target.value || null)} />
-            <datalist id={categoryOptionsId}>
-              {categories.map((item) => (
-                <option key={item.id} value={item.name} />
-              ))}
-            </datalist>
+            <select className="select" aria-label="分类" required value={selectedCategory} onChange={event => update("category", event.target.value || null)}>
+              <option value="" disabled>请选择分类</option>
+              {categoryNames.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
           </div>
           <div className="field">
             <label>支付方式</label>
-            <input className="input" aria-label="支付方式" list={paymentMethodOptionsId} value={draft.paymentMethod || ""} onChange={(event) => update("paymentMethod", event.target.value || null)} />
-            <datalist id={paymentMethodOptionsId}>
-              {paymentMethods.map((item) => (
-                <option key={item.id} value={item.name} />
-              ))}
-            </datalist>
+            <select className="select" aria-label="支付方式" required value={selectedPayment} onChange={event => update("paymentMethod", event.target.value || null)}>
+              <option value="" disabled>请选择支付方式</option>
+              {paymentNames.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
           </div>
         </div>
 
@@ -182,8 +184,8 @@ export function TransactionEditor({
         </div>
 
         <div className="draft-save-actions">
-          {onSavePreset ? <button type="button" className="button secondary" disabled={saving || !draft.amount || draft.amount <= 0} onClick={() => onSavePreset(draft)}>存为预设</button> : null}
-          <button type="submit" className="button" disabled={saving || !draft.amount || draft.amount <= 0}>
+          {onSavePreset ? <button type="button" className="button secondary" disabled={saving || !validChoices || !draft.amount || draft.amount <= 0} onClick={() => onSavePreset(draft)}>存为预设</button> : null}
+          <button type="submit" className="button" disabled={saving || !validChoices || !draft.amount || draft.amount <= 0}>
             {saving ? "处理中..." : saveLabel}
           </button>
         </div>

@@ -5,6 +5,16 @@ import { ownedCollection } from "./ownership";
 import { defaultSettings, settingsSchema } from "./userSettings";
 import { configuredAiOrigin, decryptAiKey } from "./aiSecurity";
 import type { AiCredentials } from "./aiSecurity";
+import type { UserSettings } from "./userSettings";
+
+export function validateLedgerChoices(settings: UserSettings, proposed: { category: string; paymentMethod: string }, existing?: { category?: string; paymentMethod?: string }) {
+  if (proposed.category !== existing?.category && !settings.categories.some(item => item.name === proposed.category)) {
+    throw new HttpError(400, "请从已有分类中选择。");
+  }
+  if (proposed.paymentMethod !== existing?.paymentMethod && !settings.paymentMethods.some(item => item.name === proposed.paymentMethod)) {
+    throw new HttpError(400, "请从已有支付方式中选择。");
+  }
+}
 
 export async function getUserSettings({ db, userId }: Pick<ApiContext, "db" | "userId">) {
   const doc = await ownedCollection(db, userId, "user_settings").findOne();

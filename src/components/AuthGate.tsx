@@ -7,6 +7,7 @@ import { clearAnalytics } from "@/lib/useAnalyticsData";
 import type { AppUser } from "@/lib/privateApi";
 import type { SettingsSnapshot } from "@/lib/userSettings";
 import { shortcutInputId } from "@/lib/shortcutInput";
+import { accountSettingsCache } from "@/lib/accountSettingsCache";
 
 type LedgerAccount = { user: AppUser; settings: SettingsSnapshot };
 
@@ -21,7 +22,7 @@ export function AuthGate({ children }: { children: (user: AppUser, settings: Set
     let userId: string | undefined;
     let lastChecked = 0;
     function changeAccount(next: LedgerAccount | null) {
-      if (userId && userId !== next?.user.id) clearAnalytics();
+      if (userId && userId !== next?.user.id) { clearAnalytics(); accountSettingsCache.delete(userId); }
       userId = next?.user.id;
       setAccount(next);
     }

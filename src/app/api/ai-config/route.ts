@@ -5,10 +5,17 @@ import { ownedCollection } from "@/lib/ownership";
 import { configuredAiOrigin, normalizeAiUrl, encryptAiKey, decryptAiKey, resolveAiTarget } from "@/lib/aiSecurity";
 import { getUserAi } from "@/lib/userData";
 import { parseLedgerText } from "@/lib/aiClient";
+import { getShortcutConfiguration } from "@/lib/shortcutKey";
 
 const schema = z.object({ baseUrl: z.string().trim().url().max(1000), model: z.string().trim().min(1).max(160), apiKey: z.string().trim().min(1).max(8192).optional() });
 function summary(doc: any) { return doc ? { configured: true, baseUrl: doc.baseUrl, model: doc.model, maskedKey: "••••••••", updatedAt: doc.updatedAt?.toISOString() } : { configured: false, baseUrl: "", model: "", maskedKey: "" }; }
-export const GET = privateRoute(async (_request, ctx) => NextResponse.json(summary(await ownedCollection(ctx.db, ctx.userId, "user_ai_configs").findOne())));
+export const GET = privateRoute(async (request, ctx) => {
+  const [config, shortcut] = await Promise.all([
+    ownedCollection(ctx.db, ctx.userId, "user_ai_configs").findOne(),
+    new URL(request.url).searchParams.get("shortcuts") === "1" ? getShortcutConfiguration(ctx.db, ctx.userId) : undefined
+  ]);
+  return NextResponse.json({ ...summary(config), ...(shortcut ? { shortcut } : {}) });
+});
 export const PUT = privateRoute(async (request, ctx) => {
   await rateLimit(ctx.db, ctx.userId, "ai-config", 10);
   const body = await readJson(request, schema); const baseUrl = normalizeAiUrl(body.baseUrl);

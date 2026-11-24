@@ -422,8 +422,9 @@ a {
 .settings-account-actions a { display: inline-flex; align-items: center; text-decoration: none; }
 .settings-account-heading { display: grid; gap: 8px; margin-bottom: 20px; }
 .settings-account-heading p { margin: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 14px; }
-.settings-ai.panel { padding: 0; }
+.setting-group.panel { padding: 0; }
 .setting-group-body { display: grid; gap: 16px; padding: 16px; border-top: 1px solid var(--line); }
+.setting-group-body > .settings-preference-row { margin: 0; }
 .settings-form { display: grid; gap: 18px; }
 .settings-page .field { gap: 8px; }
 .settings-page .field > span { color: var(--muted); font-size: 12px; font-weight: 700; }

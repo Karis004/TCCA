@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import { authClient, signOutLedger } from "@/lib/auth-client";
 import { clearAnalytics } from "@/lib/useAnalyticsData";
@@ -9,11 +8,9 @@ import { currencies } from "@/presets/ledger";
 import type { AppUser } from "@/lib/privateApi";
 import { settingsSchema } from "@/lib/userSettings";
 import type { SettingsSnapshot, UserSettings } from "@/lib/userSettings";
-
-const ShortcutSettings = dynamic(() => import("@/components/ShortcutSettings").then(module => module.ShortcutSettings), {
-  ssr: false,
-  loading: () => <div className="setting-group-body"><p className="settings-feedback">正在读取设置…</p></div>
-});
+import { ShortcutSettings } from "@/components/ShortcutSettings";
+import { accountSettingsCache } from "@/lib/accountSettingsCache";
+import type { ShortcutConfiguration } from "@/lib/accountSettingsCache";
 
 type Props = {
   user: AppUser;
@@ -29,8 +26,10 @@ type Props = {
 type AiConfiguration = { baseUrl: string; model: string; configured: boolean };
 
 export function AccountSettings({ user, settings, syncStatus, onChange, onReload, onRetry, onReset, readLegacyLists, children }: Props) {
-  const [ai, setAi] = useState<AiConfiguration>({ baseUrl: "", model: "", configured: false });
-  const [aiLoaded, setAiLoaded] = useState(false);
+  const cached = accountSettingsCache.get(user.id);
+  const [ai, setAi] = useState<AiConfiguration>(cached?.ai ?? { baseUrl: "", model: "", configured: false });
+  const [aiLoaded, setAiLoaded] = useState(Boolean(cached));
+  const [shortcut, setShortcut] = useState<ShortcutConfiguration>(cached?.shortcut ?? { configured: false, token: "" });
   const [key, setKey] = useState("");
   const [reveal, setReveal] = useState(false);
   const [aiMessage, setAiMessage] = useState("");
@@ -41,18 +40,21 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
   const passkeys = authClient.useListPasskeys();
   const [legacy, setLegacy] = useState<any>(null);
   const [legacyError, setLegacyError] = useState("");
-  const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false);
   const showSyncStatus = syncStatus && !["设置已同步", "已载入服务器设置"].includes(syncStatus);
   const syncFailed = showSyncStatus && !["正在保存设置…", "设置尚未保存"].includes(syncStatus);
 
   useEffect(() => {
     let alive = true;
     setLegacy(readLegacyLists());
-    fetch("/api/ai-config", { cache: "no-store" }).then(async response => {
+    if (accountSettingsCache.has(user.id)) return;
+    fetch("/api/ai-config?shortcuts=1", { cache: "no-store" }).then(async response => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
-      if (alive) { setAi(data); setAiLoaded(true); }
-    }).catch(() => { if (alive) setAiMessage("读取 AI 配置失败，请稍后重试。"); });
+      if (alive) {
+        setAi(data); setShortcut(data.shortcut); setAiLoaded(true);
+        accountSettingsCache.set(user.id, { ai: data, shortcut: data.shortcut });
+      }
+    }).catch(() => { if (alive) setAiMessage("读取设置失败，请重新打开设置页重试。"); });
     return () => { alive = false; };
     // Legacy data is imported only after an explicit choice for the current account.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,7 +77,9 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
         setKey(""); setReveal(false);
         const current = await fetch("/api/ai-config", { cache: "no-store" });
         if (!current.ok) throw new Error("读取配置失败。");
-        setAi(await current.json()); setAiLoaded(true);
+        const next = await current.json();
+        setAi(next); setAiLoaded(true);
+        accountSettingsCache.set(user.id, { ai: next, shortcut });
       }
       setAiMessage(action === "test" ? "连接正常" : action === "delete" ? "配置已删除" : action === "reveal" ? "" : "配置已保存");
     } catch (e) { setAiMessage(e instanceof Error ? e.message : "操作失败。"); }
@@ -122,7 +126,7 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
     </section>
 
     <details className="panel setting-group settings-ai">
-      <summary><span>AI 配置</span><small>{aiLoaded ? ai.configured ? "已配置" : "未配置" : aiMessage ? "读取失败" : "读取中…"}</small></summary>
+      <summary><span>AI 配置</span><small>{aiLoaded ? ai.configured ? "已配置" : "未配置" : ""}</small></summary>
       <div className="setting-group-body">
         <form className="settings-form" onSubmit={event => { event.preventDefault(); void aiAction("save"); }}>
           <label className="field"><span>API Base URL</span><input className="input" type="url" required autoComplete="off" value={ai.baseUrl} onChange={e => setAi({ ...ai, baseUrl: e.target.value })} placeholder="https://api.example.com/v1" /></label>
@@ -147,24 +151,27 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
     <details className="panel setting-group">
       <summary><span>生活报告</span></summary>
       <div className="setting-group-body">
-        <p className="hint">月报和季报在周期结束后自动生成。年报每年确认一次。报告使用你在上面配置的 AI 服务和额度。</p>
         {([
           ["month", "自动生成月报"],
           ["quarter", "自动生成季报"],
-          ["year", "显示年报确认入口"],
-          ["includeOriginalText", "允许报告参考记账原文"]
+          ["year", "显示年报确认入口"]
         ] as const).map(([key, label]) => (
           <label className="settings-preference-row" key={key}>
             <span>{label}</span>
-            <input type="checkbox" checked={settings.reports[key]} onChange={event => onChange({ reports: { ...settings.reports, [key]: event.target.checked } })} />
+            <select className="select" aria-label={label} value={settings.reports[key] ? "on" : "off"} onChange={event => onChange({ reports: { ...settings.reports, [key]: event.target.value === "on", includeOriginalText: false } })}>
+              <option value="on">开启</option><option value="off">关闭</option>
+            </select>
           </label>
         ))}
       </div>
     </details>
 
-    <details className="panel setting-group" onToggle={event => setShortcutSettingsOpen(event.currentTarget.open)}>
+    <details className="panel setting-group">
       <summary><span>苹果快捷指令</span></summary>
-      {shortcutSettingsOpen ? <ShortcutSettings /> : null}
+      <ShortcutSettings configuration={shortcut} loaded={aiLoaded} onChange={next => {
+        setShortcut(next);
+        accountSettingsCache.set(user.id, { ai, shortcut: next });
+      }} />
     </details>
 
     <section className="panel settings-block" aria-labelledby="account-settings-title">

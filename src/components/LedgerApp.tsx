@@ -1051,6 +1051,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
               saving={saving}
               idSuffix={`edit-${editingDraft._id}`}
               title="账单内容"
+              allowHistoricalChoices
               meta=""
               saveLabel="保存修改"
             />

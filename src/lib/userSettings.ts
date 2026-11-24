@@ -7,7 +7,7 @@ const reports = z.object({
   month: z.boolean().default(true),
   quarter: z.boolean().default(true),
   year: z.boolean().default(true),
-  includeOriginalText: z.boolean().default(false)
+  includeOriginalText: z.boolean().transform(() => false).default(false)
 });
 export const settingsSchema = z.object({
   categories: z.array(category).max(100), paymentMethods: z.array(named).max(100),

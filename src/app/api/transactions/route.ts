@@ -8,7 +8,7 @@ import { getRateToCny } from "@/lib/fx";
 import { ownedCollection } from "@/lib/ownership";
 import { privateRoute, readJson, objectId, HttpError, rateLimit } from "@/lib/privateApi";
 import { finishPendingDraft } from "@/lib/pendingInputStore";
-import { serializeDoc } from "@/lib/userData";
+import { getUserSettings, serializeDoc, validateLedgerChoices } from "@/lib/userData";
 import type { PendingDoc } from "@/lib/pendingInputStore";
 export const dynamic = "force-dynamic";
 const transactionSchema = z.object({
@@ -51,13 +51,14 @@ export const GET=privateRoute(async(request,ctx)=>{
  return NextResponse.json(page.map(serializeDoc),{headers:{"X-Next-Cursor":next}});
 });
 export const POST=privateRoute(async(request,ctx)=>{
- await rateLimit(ctx.db,ctx.userId,"save-transaction",120);
+ const [, settings] = await Promise.all([rateLimit(ctx.db,ctx.userId,"save-transaction",120),getUserSettings(ctx)]);
  const {pendingInputId,pendingDraftId,...payload}=await readJson(request,transactionSchema);
  const collection=ownedCollection(ctx.db,ctx.userId,"transactions");
  const sourceId=pendingInputId&&pendingDraftId?new ObjectId(createHash("sha256").update("pending:"+ctx.userId+":"+pendingInputId+":"+pendingDraftId).digest("hex").slice(0,24)):null;
  if(sourceId){const existing=await collection.findOne({_id:sourceId});if(existing){await finishPendingDraft(pendingInputId!,pendingDraftId!,ctx.userId);return NextResponse.json(serializeDoc(existing));}
  const source=await ownedCollection<PendingDoc>(ctx.db,ctx.userId,"pending_inputs").findOne({_id:new ObjectId(pendingInputId!),status:"ready","drafts.pendingDraftId":pendingDraftId});
  if(!source)throw new HttpError(409,"这张暂存账单已处理或已删除，请刷新列表。");}
+ validateLedgerChoices(settings,payload);
  if(await collection.countDocuments()>=50000)throw new HttpError(413,"账单数量已达到当前账户上限，请联系站长。");
  const currency=normalizeCurrencyCode(payload.currency)!;const fxRateToCny=await getRateToCny(currency);const now=new Date();
  const doc={...payload,currency,amountCny:Number((payload.amount*fxRateToCny).toFixed(2)),fxRateToCny,createdAt:now,updatedAt:now};
@@ -67,9 +68,12 @@ export const POST=privateRoute(async(request,ctx)=>{
  const result=await collection.insertOne(doc);return NextResponse.json(serializeDoc({...doc,_id:result.insertedId}),{status:201});
 });
 export const PUT=privateRoute(async(request,ctx)=>{
- const _id=objectId(request);await rateLimit(ctx.db,ctx.userId,"edit-transaction",120);
- const collection=ownedCollection(ctx.db,ctx.userId,"transactions");if(!await collection.findOne({_id}))throw new HttpError(404,"找不到这笔账单。");
+ const _id=objectId(request);
+ const collection=ownedCollection(ctx.db,ctx.userId,"transactions");
+ const [,settings,existing]=await Promise.all([rateLimit(ctx.db,ctx.userId,"edit-transaction",120),getUserSettings(ctx),collection.findOne({_id})]);
+ if(!existing)throw new HttpError(404,"找不到这笔账单。");
  const {pendingInputId:_source,pendingDraftId:_draft,...payload}=await readJson(request,transactionSchema);
+ validateLedgerChoices(settings,payload,{category:existing.category,paymentMethod:existing.paymentMethod});
  const currency=normalizeCurrencyCode(payload.currency)!;const fxRateToCny=await getRateToCny(currency);
  const saved=await collection.findOneAndUpdate({_id},{$set:{...payload,currency,fxRateToCny,amountCny:Number((payload.amount*fxRateToCny).toFixed(2)),updatedAt:new Date()}},{returnDocument:"after"});
  if(!saved)throw new HttpError(404,"找不到这笔账单。");return NextResponse.json(serializeDoc(saved));
