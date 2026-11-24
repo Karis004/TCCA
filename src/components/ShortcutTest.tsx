@@ -20,7 +20,7 @@ export function ShortcutTest() {
       const response = await fetch("/api/shortcuts/key", { method: "POST" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "生成失败。");
-      setToken(data.token);
+      setToken("Bearer " + data.token);
       setMessage("密钥已生成，可复制到快捷指令。原测试密钥已失效。");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "生成失败。");
@@ -34,7 +34,7 @@ export function ShortcutTest() {
     try {
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token.trim()}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token.trim().replace(/^Bearer\s+/i, "")}` },
         body: JSON.stringify({ text })
       });
       const data = await response.json();
@@ -51,7 +51,7 @@ export function ShortcutTest() {
       <h1>快捷指令本地测试</h1>
       <div className="settings-form">
         <label className="field"><span>POST 地址</span><input className="input" readOnly value={endpoint} onFocus={event => event.currentTarget.select()} /></label>
-        <label className="field"><span>快捷指令密钥</span><input className="input" value={token} autoComplete="off" onChange={event => setToken(event.target.value)} onFocus={event => event.currentTarget.select()} /></label>
+        <label className="field"><span>Authorization</span><input className="input" value={token} autoComplete="off" onChange={event => setToken(event.target.value)} onFocus={event => event.currentTarget.select()} /></label>
         <button type="button" className="text-button" disabled={busy} onClick={() => void createKey()}>生成或更换测试密钥</button>
         <label className="field"><span>识别文字</span><textarea className="textarea" value={text} maxLength={12000} onChange={event => setText(event.target.value)} /></label>
         <button type="button" className="primary-button" disabled={busy || !token.trim() || !text.trim()} onClick={() => void submit()}>{busy ? "处理中…" : "发送测试 POST"}</button>
