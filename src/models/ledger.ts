@@ -61,6 +61,7 @@ export type TransactionDraft = ParsedTransaction & {
 
 export type PendingInput = {
   _id: string;
+  source?: "shortcut";
   text: string;
   referenceDate: string;
   status: "pending" | "processing" | "ready" | "completed";

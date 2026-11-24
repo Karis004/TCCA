@@ -1,13 +1,12 @@
-import { privateRoute, readJson, rateLimit, HttpError } from "@/lib/privateApi";
+import { privateRoute, readJson, HttpError } from "@/lib/privateApi";
 import type { ApiContext } from "@/lib/privateApi";
 import { ownedCollection } from "@/lib/ownership";
-import { getUserAi, getUserSettings } from "@/lib/userData";
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getDb } from "@/lib/mongodb";
 import { pendingInputSchema } from "@/lib/pendingInputs";
-import { finishPendingDraft, serializePending } from "@/lib/pendingInputStore";
+import { createPendingInput, finishPendingDraft, serializePending } from "@/lib/pendingInputStore";
 import type { PendingDoc } from "@/lib/pendingInputStore";
 
 export const dynamic = "force-dynamic";
@@ -29,16 +28,8 @@ async function handleGET(request: Request, ctx: ApiContext) {
   } catch (error) { return failure(error); }
 }
 async function handlePOST(request: Request, ctx: ApiContext) {
-  await rateLimit(ctx.db, ctx.userId, "pending-create", 60);
-  if (await ownedCollection(ctx.db, ctx.userId, "pending_inputs").countDocuments({ status: { $ne: "completed" } }) >= 500) throw new HttpError(413, "暂存文字已达到500条，请先处理现有记录。");
-  try {
-    const payload = await readJson(request, pendingInputSchema);
-    const now = new Date();
-    const doc: PendingDoc = { userId: ctx.userId, ...payload, status: "pending", drafts: [], lastError: null, createdAt: now, updatedAt: now };
-    const db = await getDb();
-    const result = await ownedCollection<PendingDoc>(db, ctx.userId, "pending_inputs").insertOne(doc);
-    return NextResponse.json(serializePending({ ...doc, _id: result.insertedId }), { status: 201 });
-  } catch (error) { return failure(error); }
+  const payload = await readJson(request, pendingInputSchema);
+  return NextResponse.json(serializePending(await createPendingInput(ctx.db, ctx.userId, payload)), { status: 201 });
 }
 async function handlePUT(request: Request, ctx: ApiContext) {
   const _id = idFrom(request);

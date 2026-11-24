@@ -15,6 +15,7 @@ import type { SettingsSnapshot } from "@/lib/userSettings";
 import type { ReportSummary } from "@/lib/reportTypes";
 import { PendingInputList } from "@/components/PendingInputList";
 import { mergePendingDrafts, pendingKey } from "@/lib/pendingInputs";
+import { shortcutInputId } from "@/lib/shortcutInput";
 import { changeDraft, identifyDrafts } from "@/lib/draftState";
 import { ledgerToday, presetToDraft, suggestPresetName } from "@/lib/transactionPresets";
 import type { Category, TransactionDraft as Draft, PaymentMethod, Transaction, TransactionInput, TransactionPreset, PendingInput } from "@/models/ledger";
@@ -178,6 +179,8 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   const [pendingEditError, setPendingEditError] = useState("");
   const pendingLock = useRef(false);
   const pendingReads = useRef(0);
+  const [shortcutId, setShortcutId] = useState<string | null>(null);
+  const startedShortcutId = useRef<string | null>(null);
   const excludedCategories = useMemo(() => [...new Set(categories.filter((item) => item.includeInAnalytics === false).map((item) => item.name.trim()).filter(Boolean))].sort(), [categories]);
   const analyticsState = useAnalyticsData({ userId: user.id, month: selectedMonth, currency: analysisCurrency, excludedCategories: showAllCategories ? [] : excludedCategories }, true);
 
@@ -285,7 +288,24 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     } catch (err) { if (read === pendingReads.current) setPendingError(err instanceof Error ? err.message : "读取暂存文字失败。"); }
     finally { if (read === pendingReads.current) setPendingLoading(false); }
   }, []);
-  useEffect(() => { void loadPendingInputs(); }, [loadPendingInputs]);
+  useEffect(() => {
+    const openShortcut = () => {
+      const id = shortcutInputId(window.location.hash);
+      if (!id) return false;
+      setTab("entry");
+      setReportsOpen(false);
+      setReportIssue(null);
+      analysisScroll.current = null;
+      setPendingProgress("");
+      setShortcutId(id);
+      setPendingLoading(true);
+      void loadPendingInputs();
+      return true;
+    };
+    if (!openShortcut()) void loadPendingInputs();
+    window.addEventListener("hashchange", openShortcut);
+    return () => window.removeEventListener("hashchange", openShortcut);
+  }, [loadPendingInputs]);
 
   async function savePendingText() {
     if (!text.trim() || pendingSaving) return;
@@ -330,7 +350,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     } catch (err) { setPendingError(err instanceof Error ? err.message : "删除失败。"); }
   }
 
-  async function processPendingInputs(ids: string[]) {
+  const processPendingInputs = useCallback(async (ids: string[]) => {
     if (pendingLock.current) return;
     pendingLock.current = true;
     setPendingBusy(true);
@@ -338,11 +358,12 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     setMessage("");
     let succeeded = 0;
     let failed = 0;
+    let lastError = "";
     try {
       for (let index = 0; index < ids.length; index++) {
         setPendingProgress(`正在识别 ${index + 1} / ${ids.length} 条…`);
         try {
-          const response = await fetch(`/api/pending-inputs/parse?id=${ids[index]}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categories: categories.map((item) => item.name), paymentMethods: paymentMethods.map((item) => item.name) }) });
+          const response = await fetch(`/api/pending-inputs/parse?id=${ids[index]}`, { method: "POST" });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "识别失败。");
           setPendingInputs((current) => current.map((item) => item._id === data._id ? data : item));
@@ -352,13 +373,59 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
             return identifyDrafts([...retained, ...data.drafts.filter((draft: Draft) => !keys.has(pendingKey(draft)))]);
           });
           succeeded++;
-        } catch { failed++; }
+        } catch (error) {
+          failed++;
+          lastError = error instanceof Error ? error.message : "识别失败，请稍后重试。";
+        }
       }
       await loadPendingInputs();
-      setPendingProgress(`已识别 ${succeeded} 条${failed ? `，${failed} 条失败并保留，可稍后重试` : "，请确认账单后录入"}。`);
+      if (ids.length === 1 && failed) {
+        setPendingProgress("");
+        setPendingError(lastError);
+      } else {
+        setPendingProgress(`已识别 ${succeeded} 条${failed ? `，${failed} 条失败并保留，可稍后重试` : "，请确认账单后录入"}。`);
+      }
       if (succeeded) setDraftRevision((value) => value + 1);
     } finally { setPendingBusy(false); pendingLock.current = false; }
-  }
+  }, [loadPendingInputs]);
+
+  const focusPendingDraft = useCallback((inputId: string) => {
+    draftAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const index = drafts.findIndex(draft => draft.pendingInputId === inputId);
+    const slide = carouselRef.current?.children[index] as HTMLElement | undefined;
+    const first = carouselRef.current?.firstElementChild as HTMLElement | undefined;
+    if (slide && first) carouselRef.current?.scrollTo({ left: slide.offsetLeft - first.offsetLeft, behavior: "smooth" });
+  }, [drafts]);
+
+  const shortcutStatus = shortcutId
+    ? pendingInputs.find(input => input._id === shortcutId && input.source === "shortcut")?.status
+    : undefined;
+
+  useEffect(() => {
+    if (!shortcutId || tab !== "entry" || pendingLoading || pendingBusy || loading || saving || pendingSaving) return;
+    const clearShortcutHash = () => {
+      if (shortcutInputId(window.location.hash) === shortcutId) {
+        window.history.replaceState(window.history.state, "", window.location.pathname + window.location.search);
+      }
+    };
+    if (shortcutStatus === "ready") {
+      clearShortcutHash();
+      focusPendingDraft(shortcutId);
+      setShortcutId(null);
+    } else if (shortcutStatus === "pending" && startedShortcutId.current !== shortcutId) {
+      startedShortcutId.current = shortcutId;
+      clearShortcutHash();
+      document.getElementById("pending-inputs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      void processPendingInputs([shortcutId]);
+    } else if (shortcutStatus === "processing") {
+      const timer = window.setInterval(() => {
+        if (document.visibilityState === "visible") void loadPendingInputs();
+      }, 3000);
+      return () => window.clearInterval(timer);
+    } else if (!shortcutStatus) {
+      if (!pendingError) setPendingError("当前账本中找不到这条快捷指令记录。");
+    }
+  }, [shortcutId, shortcutStatus, tab, pendingLoading, pendingBusy, loading, saving, pendingSaving, pendingError, focusPendingDraft, loadPendingInputs, processPendingInputs]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -839,6 +906,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
           />
           <PendingInputList
             inputs={pendingInputs}
+            shortcutId={shortcutId}
             loading={pendingLoading}
             busy={pendingBusy || loading || saving || pendingSaving}
             processing={pendingBusy}
@@ -846,12 +914,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
             progress={pendingProgress}
             onRefresh={loadPendingInputs}
             onProcess={processPendingInputs}
-            onView={(input) => {
-              draftAreaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-              const index = drafts.findIndex((draft) => draft.pendingInputId === input._id);
-              const slide = carouselRef.current?.children[index] as HTMLElement | undefined;
-              if (slide) carouselRef.current?.scrollTo({ left: slide.offsetLeft - (carouselRef.current.firstElementChild as HTMLElement).offsetLeft, behavior: "smooth" });
-            }}
+            onView={input => focusPendingDraft(input._id)}
             onEdit={(input) => { setPendingEdit(input); setPendingEditError(""); }}
             onDelete={deletePendingInput}
           />

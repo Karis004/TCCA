@@ -11,6 +11,7 @@ type ParseOptions = {
   paymentMethods?: string[];
   referenceDate?: string;
   defaultCurrency?: string;
+  shortcut?: boolean;
   credentials?: AiCredentials;
 };
 
@@ -112,9 +113,13 @@ function parseAssistantJson(content: string): unknown {
   return JSON.parse(withoutFence);
 }
 
-function parseLedgerResponse(content: string) {
+function parseLedgerResponse(content: string, shortcut: boolean) {
   const raw = parseAssistantJson(content) as any;
-  const candidates = Array.isArray(raw) ? raw : raw.transactions || raw.items || raw.data || [raw];
+  const candidates = Array.isArray(raw) ? raw : raw?.transactions || raw?.items || raw?.data || [raw];
+
+  if (shortcut && Array.isArray(candidates) && !candidates.length) {
+    throw new Error("未能从截图文字中提取交易。可以补充或编辑文字后重试。");
+  }
 
   if (!Array.isArray(candidates) || !candidates.length || candidates.length > 50) {
     throw new Error("AI returned no ledger transactions.");
@@ -136,7 +141,7 @@ export async function parseLedgerText(input: string, options: ParseOptions = {})
 
   const today = options.referenceDate || ledgerToday();
   const prompt = buildLedgerPrompt(input, today, options);
-  return requestJsonAi(options.credentials, prompt, parseLedgerResponse, { temperature: 0, attempts: 2 });
+  return requestJsonAi(options.credentials, prompt, content => parseLedgerResponse(content, Boolean(options.shortcut)), { temperature: 0, attempts: 2 });
 }
 
 export async function requestJsonAi<T>(

@@ -6,6 +6,7 @@ import { authClient, signOutLedger } from "@/lib/auth-client";
 import { clearAnalytics } from "@/lib/useAnalyticsData";
 import type { AppUser } from "@/lib/privateApi";
 import type { SettingsSnapshot } from "@/lib/userSettings";
+import { shortcutInputId } from "@/lib/shortcutInput";
 
 type LedgerAccount = { user: AppUser; settings: SettingsSnapshot };
 
@@ -74,7 +75,9 @@ export function AuthGate({ children }: { children: (user: AppUser, settings: Set
   async function login(method: "google" | "passkey") {
     setBusy(true); setError("");
     try {
-      const result = method === "google" ? await authClient.signIn.social({ provider: "google", callbackURL: "/" }) : await authClient.signIn.passkey();
+      const hash = window.location.hash;
+      const callbackURL = shortcutInputId(hash) ? `/${hash}` : "/";
+      const result = method === "google" ? await authClient.signIn.social({ provider: "google", callbackURL }) : await authClient.signIn.passkey();
       if (result.error) throw new Error(result.error.message || "登录未完成，请重试。");
       if (method === "passkey") window.location.reload();
     } catch (e) { setError(e instanceof Error ? e.message : "登录未完成。"); }

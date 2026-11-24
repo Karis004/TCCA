@@ -9,6 +9,10 @@ export const pendingInputSchema = z.object({
   }, "请选择有效日期。")
 });
 
+export const shortcutInputSchema = z.object({
+  text: pendingInputSchema.shape.text
+});
+
 export function pendingKey(draft: TransactionDraft) {
   return draft.pendingInputId && draft.pendingDraftId ? `${draft.pendingInputId}:${draft.pendingDraftId}` : null;
 }

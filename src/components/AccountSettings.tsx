@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { authClient, signOutLedger } from "@/lib/auth-client";
 import { clearAnalytics } from "@/lib/useAnalyticsData";
@@ -8,6 +9,11 @@ import { currencies } from "@/presets/ledger";
 import type { AppUser } from "@/lib/privateApi";
 import { settingsSchema } from "@/lib/userSettings";
 import type { SettingsSnapshot, UserSettings } from "@/lib/userSettings";
+
+const ShortcutSettings = dynamic(() => import("@/components/ShortcutSettings").then(module => module.ShortcutSettings), {
+  ssr: false,
+  loading: () => <div className="setting-group-body"><p className="settings-feedback">正在读取设置…</p></div>
+});
 
 type Props = {
   user: AppUser;
@@ -35,6 +41,7 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
   const passkeys = authClient.useListPasskeys();
   const [legacy, setLegacy] = useState<any>(null);
   const [legacyError, setLegacyError] = useState("");
+  const [shortcutSettingsOpen, setShortcutSettingsOpen] = useState(false);
   const showSyncStatus = syncStatus && !["设置已同步", "已载入服务器设置"].includes(syncStatus);
   const syncFailed = showSyncStatus && !["正在保存设置…", "设置尚未保存"].includes(syncStatus);
 
@@ -153,6 +160,11 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
           </label>
         ))}
       </div>
+    </details>
+
+    <details className="panel setting-group" onToggle={event => setShortcutSettingsOpen(event.currentTarget.open)}>
+      <summary><span>苹果快捷指令</span></summary>
+      {shortcutSettingsOpen ? <ShortcutSettings /> : null}
     </details>
 
     <section className="panel settings-block" aria-labelledby="account-settings-title">

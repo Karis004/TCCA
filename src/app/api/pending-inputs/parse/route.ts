@@ -1,41 +1,13 @@
-import { privateRoute, readJson, rateLimit, HttpError } from "@/lib/privateApi";
-import type { ApiContext } from "@/lib/privateApi";
-import { ownedCollection } from "@/lib/ownership";
-import { getUserAi, getUserSettings } from "@/lib/userData";
-import { randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import { parseDrafts } from "@/lib/parseDrafts";
+import { HttpError, privateRoute } from "@/lib/privateApi";
+import { parsePendingInput } from "@/lib/parsePendingInput";
 import { serializePending } from "@/lib/pendingInputStore";
-import type { PendingDoc } from "@/lib/pendingInputStore";
 
 export const dynamic = "force-dynamic";
-async function handlePOST(request: Request, ctx: ApiContext) {
-  const id = new URL(request.url).searchParams.get("id");
-  if (!id || !ObjectId.isValid(id)) return NextResponse.json({ error: "无效的暂存编号。" }, { status: 400 });
-  const limits = rateLimit(ctx.db, ctx.userId, "ai-minute", 10).then(() => rateLimit(ctx.db, ctx.userId, "ai-day", 200, 86400));
-  const [, settings, credentials] = await Promise.all([limits, getUserSettings(ctx), getUserAi(ctx)]);
-  const collection = ownedCollection<PendingDoc>(ctx.db, ctx.userId, "pending_inputs");
-  const _id = new ObjectId(id);
-  const attemptId = randomUUID();
-  const claimed = await collection.findOneAndUpdate({ _id, $or: [{ status: "pending" }, { status: "processing", leaseUntil: { $lt: new Date() } }] }, { $set: { status: "processing", attemptId, leaseUntil: new Date(Date.now() + 180000), updatedAt: new Date() } }, { returnDocument: "after" });
-  if (!claimed) {
-    const existing = await collection.findOne({ _id });
-    if (existing?.status === "ready") return NextResponse.json(serializePending(existing));
-    return NextResponse.json({ error: "该文字正在识别或已处理，请刷新列表。" }, { status: 409 });
-  }
-  try {
-    const parsed = await parseDrafts(claimed.text, { credentials, defaultCurrency: settings.defaultCurrency, categories: settings.categories.map(c => c.name), paymentMethods: settings.paymentMethods.map(p => p.name), referenceDate: claimed.referenceDate });
-    const drafts = parsed.map((draft) => ({ ...draft, pendingInputId: id, pendingDraftId: randomUUID() }));
-    const doc = await collection.findOneAndUpdate({ _id, attemptId, status: "processing" }, { $set: { status: "ready", drafts, lastError: null, updatedAt: new Date() }, $unset: { leaseUntil: "", attemptId: "" } }, { returnDocument: "after" });
-    if (!doc) return NextResponse.json({ error: "识别状态已变更，请刷新列表。" }, { status: 409 });
-    return NextResponse.json(serializePending(doc));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "识别失败，请稍后重试。";
-    await collection.updateOne({ _id, attemptId, status: "processing" }, { $set: { status: "pending", lastError: message, updatedAt: new Date() }, $unset: { leaseUntil: "", attemptId: "" } });
-    return NextResponse.json({ error: message }, { status: 502 });
-  }
-}
 
-export const POST = privateRoute(handlePOST);
+export const POST = privateRoute(async (request, { db, userId }) => {
+  const id = new URL(request.url).searchParams.get("id");
+  if (!id || !ObjectId.isValid(id)) throw new HttpError(400, "无效的暂存编号。");
+  return NextResponse.json(serializePending(await parsePendingInput(db, userId, id)));
+});
