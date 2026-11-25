@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { pendingInputSchema, shortcutInputSchema, pendingKey, mergePendingDrafts } from '../src/lib/pendingInputs.ts';
 import { shortcutInputId, shortcutPaymentMethod } from '../src/lib/shortcutInput.ts';
+import { refreshOnForeground } from '../src/lib/foregroundRefresh.ts';
 
 const draft = {type:'expense',amount:12.8,currency:'HKD',date:'2026-10-20',category:'交通',paymentMethod:'八达通',merchant:null,tags:[],note:null,confidence:1,needsReview:true,pendingInputId:'input-1',pendingDraftId:'draft-1'};
 const input = {_id:'input-1',text:'今天地铁12.8块',referenceDate:'2026-10-20',status:'ready',drafts:[draft],createdAt:'2026-10-20',updatedAt:'2026-10-20'};
@@ -45,4 +46,68 @@ test('confirmed or deleted source drafts disappear while unrelated drafts are re
   const normal={...draft,pendingInputId:undefined,pendingDraftId:undefined};
   assert.deepEqual(mergePendingDrafts([draft,second,normal],[{...input,drafts:[second]}]),[second,normal]);
   assert.deepEqual(mergePendingDrafts([draft,normal],[]),[normal]);
+});
+
+function foregroundFixture() {
+  const page = new EventTarget();
+  const document = new EventTarget();
+  document.visibilityState = 'visible';
+  const timers = new Map();
+  let nextTimer = 0;
+  page.setTimeout = callback => { const id = ++nextTimer; timers.set(id, callback); return id; };
+  page.clearTimeout = id => timers.delete(id);
+  const flush = () => { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach(callback => callback()); };
+  return { page, document, timers, flush };
+}
+
+test('returning to the foreground merges shortcut drafts while retaining draft edits', () => {
+  const { page, document, timers, flush } = foregroundFixture();
+  let calls = 0;
+  const edited = { ...draft, amount: 20, note: '人工修改' };
+  const incoming = { ...draft, pendingInputId: 'shortcut-2', pendingDraftId: 'draft-2' };
+  let drafts = [edited];
+  const stop = refreshOnForeground(() => {
+    calls++;
+    drafts = mergePendingDrafts(drafts, [input, { ...input, _id: 'shortcut-2', source: 'shortcut', drafts: [incoming] }]);
+  }, page, document);
+  assert.equal(timers.size, 0);
+  document.visibilityState = 'hidden';
+  document.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(timers.size, 0);
+  document.visibilityState = 'visible';
+  document.dispatchEvent(new Event('visibilitychange'));
+  page.dispatchEvent(new Event('focus'));
+  assert.equal(timers.size, 1);
+  flush();
+  assert.equal(calls, 1);
+  assert.deepEqual(drafts, [edited, incoming]);
+  page.dispatchEvent(new Event('focus'));
+  flush();
+  assert.deepEqual(drafts, [edited, incoming]);
+  stop();
+});
+
+test('restored pages refresh once and cleanup cancels queued foreground work', () => {
+  const { page, document, timers, flush } = foregroundFixture();
+  let calls = 0;
+  const stop = refreshOnForeground(() => calls++, page, document);
+  page.dispatchEvent(new Event('pageshow'));
+  assert.equal(timers.size, 0);
+  const restored = new Event('pageshow');
+  Object.defineProperty(restored, 'persisted', { value: true });
+  page.dispatchEvent(restored);
+  flush();
+  assert.equal(calls, 1);
+  page.dispatchEvent(new Event('focus'));
+  document.visibilityState = 'hidden';
+  document.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(timers.size, 0);
+  document.visibilityState = 'visible';
+  page.dispatchEvent(new Event('focus'));
+  stop();
+  flush();
+  page.dispatchEvent(new Event('focus'));
+  page.dispatchEvent(restored);
+  assert.equal(timers.size, 0);
+  assert.equal(calls, 1);
 });

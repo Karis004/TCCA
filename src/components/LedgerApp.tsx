@@ -16,6 +16,7 @@ import type { ReportSummary } from "@/lib/reportTypes";
 import { PendingInputList } from "@/components/PendingInputList";
 import { mergePendingDrafts, pendingKey } from "@/lib/pendingInputs";
 import { shortcutInputId } from "@/lib/shortcutInput";
+import { refreshOnForeground } from "@/lib/foregroundRefresh";
 import { changeDraft, identifyDrafts } from "@/lib/draftState";
 import { ledgerToday, presetToDraft, suggestPresetName } from "@/lib/transactionPresets";
 import type { Category, TransactionDraft as Draft, PaymentMethod, Transaction, TransactionInput, TransactionPreset, PendingInput } from "@/models/ledger";
@@ -279,7 +280,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     const read = ++pendingReads.current;
     setPendingError("");
     try {
-      const response = await fetch("/api/pending-inputs");
+      const response = await fetch("/api/pending-inputs", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "读取暂存文字失败。");
       if (read !== pendingReads.current) return;
@@ -304,7 +305,13 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
     };
     if (!openShortcut()) void loadPendingInputs();
     window.addEventListener("hashchange", openShortcut);
-    return () => window.removeEventListener("hashchange", openShortcut);
+    const stopRefresh = refreshOnForeground(() => {
+      if (!openShortcut()) void loadPendingInputs();
+    }, window, document);
+    return () => {
+      stopRefresh();
+      window.removeEventListener("hashchange", openShortcut);
+    };
   }, [loadPendingInputs]);
 
   async function savePendingText() {
@@ -316,6 +323,8 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
       const response = await fetch("/api/pending-inputs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: savedText, referenceDate: ledgerToday() }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "暂存失败。");
+      pendingReads.current++;
+      setPendingLoading(false);
       setPendingInputs((current) => [...current, data]);
       setText((current) => current === savedText ? "" : current);
       setParseError("");
@@ -333,6 +342,8 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
       const response = await fetch(`/api/pending-inputs?id=${pendingEdit._id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: fields.get("text"), referenceDate: fields.get("referenceDate") }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "保存失败。");
+      pendingReads.current++;
+      setPendingLoading(false);
       setPendingInputs((current) => current.map((item) => item._id === data._id ? data : item));
       setPendingEdit(null);
     } catch (err) { setPendingEditError(err instanceof Error ? err.message : "保存失败。"); }
@@ -345,6 +356,8 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
       const response = await fetch(`/api/pending-inputs?id=${input._id}`, { method: "DELETE" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "删除失败。");
+      pendingReads.current++;
+      setPendingLoading(false);
       setPendingInputs((current) => current.filter((item) => item._id !== input._id));
       setDrafts((current) => current.filter((item) => item.pendingInputId !== input._id));
     } catch (err) { setPendingError(err instanceof Error ? err.message : "删除失败。"); }
@@ -366,6 +379,8 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
           const response = await fetch(`/api/pending-inputs/parse?id=${ids[index]}`, { method: "POST" });
           const data = await response.json();
           if (!response.ok) throw new Error(data.error || "识别失败。");
+          pendingReads.current++;
+          setPendingLoading(false);
           setPendingInputs((current) => current.map((item) => item._id === data._id ? data : item));
           setDrafts((current) => {
             const keys = new Set(current.map(pendingKey));
