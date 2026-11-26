@@ -35,3 +35,7 @@ test('empty ledger and leap-day anniversary',()=>{
  assert.deepEqual(calculateMilestones([]),[]);
  assert.equal(calculateMilestones([row('2024-02-29T00:00:00Z')],new Date('2025-03-01')).find(c=>c.id==='elapsed-1y').date,'2025-02-28');
 });
+test('fractional amounts cross the exact monetary threshold in cents',()=>{
+ const rows=[row('2026-11-01T00:00:00Z','expense',4999.7),row('2026-11-01T00:01:00Z','expense',0.1),row('2026-11-01T00:02:00Z','expense',0.2)];
+ assert.ok(calculateMilestones(rows).some(c=>c.id==='expense-5000'));
+});

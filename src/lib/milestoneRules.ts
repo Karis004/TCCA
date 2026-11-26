@@ -31,9 +31,10 @@ export function calculateMilestones(rows: MilestoneRow[], now = new Date()): Mil
     }
     if (row.type === "expense" || row.type === "income") {
       const isExpense = row.type === "expense", before = isExpense ? expense : income;
-      if (isExpense) expense += row.amountHkd; else income += row.amountHkd;
-      const n = moneyTier(isExpense ? expense : income,isExpense);
-      if (n && n > moneyTier(before,isExpense)) {
+      const cents = Math.round(row.amountHkd * 100);
+      if (isExpense) expense += cents; else income += cents;
+      const n = moneyTier((isExpense ? expense : income) / 100,isExpense);
+      if (n && n > moneyTier(before / 100,isExpense)) {
         const group = isExpense ? "expense" : "income";
         add(`${group}-${n}`,`${group}-${Math.min(n,isExpense ? 200000 : 300000)}`,n,"HKD",`累计${isExpense ? "支出" : "收入"} ${n.toLocaleString("en-US")} HKD`,date);
       }
