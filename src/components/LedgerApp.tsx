@@ -1,5 +1,6 @@
 "use client";
 
+import "./milestones.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { getCurrentMonth } from "@/lib/analytics";
@@ -28,6 +29,7 @@ const AnalyticsPanel = dynamic(() => import("@/components/AnalyticsPanel").then(
 const ReportsPanel = dynamic(() => import("@/components/ReportsPanel").then(module => module.ReportsPanel), {
   loading: () => <p className="hint" role="status">正在打开报告…</p>
 });
+const Milestones = dynamic(() => import('@/components/Milestones').then(m=>m.Milestones), {loading:()=>null});
 const reportsHash = "#reports";
 
 type Tab = "entry" | "analytics" | "records" | "settings";
@@ -40,7 +42,7 @@ type EditingDraft = Draft & {
 const tabs: { key: Tab; label: string }[] = [
   { key: "entry", label: "记账" },
   { key: "analytics", label: "分析" },
-  { key: "records", label: "流水" },
+  { key: "records", label: "账本" },
   { key: "settings", label: "设置" }
 ];
 
@@ -797,7 +799,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
   }, [transactions]);
 
   return (
-    <main className="app-shell">
+    <main className="app-shell milestone-scope">
       <header className="topbar">
         {tab === "entry" ? <div>
           <div className="brand">TCCA</div>
@@ -821,6 +823,7 @@ export function LedgerApp({ user, initialSettings }: { user: AppUser; initialSet
         </nav>
       </header>
 
+      <Milestones userId={user.id} tab={tab} revision={recordsRevision} />
       {error ? <div className="notice error">{error}</div> : null}
       {message ? <div className="notice success">{message}</div> : null}
 

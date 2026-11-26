@@ -30,6 +30,8 @@ export async function getDb() {
   const client = await clientPromise;
   const db = client.db(process.env.MONGODB_DB || "ai_ledger");
   if (!globalWithMongo._tccaIndexesPromise) globalWithMongo._tccaIndexesPromise = Promise.all([
+    db.collection("milestone_summaries").createIndex({userId:1},{unique:true}),
+    db.collection("transactions").createIndex({userId:1,updatedAt:-1}),
     db.collection("user_settings").createIndex({ userId: 1 }, { unique: true }),
     db.collection("user_ai_configs").createIndex({ userId: 1 }, { unique: true }),
     db.collection("transactions").createIndex({ userId: 1, date: -1, createdAt: -1, _id: -1 }),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import { APP_VERSION } from "@/lib/version";
 import Link from "next/link";
 import { authClient, signOutLedger } from "@/lib/auth-client";
 import { clearAnalytics } from "@/lib/useAnalyticsData";
@@ -207,5 +208,6 @@ export function AccountSettings({ user, settings, syncStatus, onChange, onReload
         <button className="text-button" onClick={() => { clearAnalytics(); localStorage.removeItem(`tcca-settings:${user.id}`); void signOutLedger(); }}>退出登录</button>
       </div>
     </section>
+    <div className="footer">TCCA · v{APP_VERSION}</div>
   </div>;
 }

@@ -1,3 +1,6 @@
+import type { ApiContext } from "@/lib/privateApi";
+import { after } from "next/server";
+import { refreshMilestones } from "@/lib/milestoneStore";
 import { getRecentDates } from "@/lib/analytics";
 import { ObjectId } from "mongodb";
 import { createHash } from "node:crypto";
@@ -10,6 +13,8 @@ import { privateRoute, readJson, objectId, HttpError, rateLimit } from "@/lib/pr
 import { finishPendingDraft } from "@/lib/pendingInputStore";
 import { getUserSettings, serializeDoc, validateLedgerChoices } from "@/lib/userData";
 import type { PendingDoc } from "@/lib/pendingInputStore";
+function queueMilestones(ctx: ApiContext) { after(()=>refreshMilestones(ctx.db,ctx.userId).catch(()=>{console.error('Milestone refresh failed');}));
+}
 export const dynamic = "force-dynamic";
 const transactionSchema = z.object({
  type:z.enum(["expense","income","transfer","refund"]), amount:z.coerce.number().positive().max(1e12), currency:z.string().min(3).max(3).regex(/^[A-Za-z]{3}$/),
@@ -64,8 +69,8 @@ export const POST=privateRoute(async(request,ctx)=>{
  const doc={...payload,currency,amountCny:Number((payload.amount*fxRateToCny).toFixed(2)),fxRateToCny,createdAt:now,updatedAt:now};
  if(sourceId){try{await collection.insertOne({...doc,_id:sourceId});}catch(e:any){if(e.code!==11000)throw e;}
  const saved=await collection.findOne({_id:sourceId});if(!saved)throw new HttpError(409,"该账单已处理。");
- await finishPendingDraft(pendingInputId!,pendingDraftId!,ctx.userId);return NextResponse.json(serializeDoc(saved),{status:201});}
- const result=await collection.insertOne(doc);return NextResponse.json(serializeDoc({...doc,_id:result.insertedId}),{status:201});
+ await finishPendingDraft(pendingInputId!,pendingDraftId!,ctx.userId);queueMilestones(ctx);return NextResponse.json(serializeDoc(saved),{status:201});}
+ const result=await collection.insertOne(doc);queueMilestones(ctx);return NextResponse.json(serializeDoc({...doc,_id:result.insertedId}),{status:201});
 });
 export const PUT=privateRoute(async(request,ctx)=>{
  const _id=objectId(request);
@@ -76,9 +81,9 @@ export const PUT=privateRoute(async(request,ctx)=>{
  validateLedgerChoices(settings,payload,{category:existing.category,paymentMethod:existing.paymentMethod});
  const currency=normalizeCurrencyCode(payload.currency)!;const fxRateToCny=await getRateToCny(currency);
  const saved=await collection.findOneAndUpdate({_id},{$set:{...payload,currency,fxRateToCny,amountCny:Number((payload.amount*fxRateToCny).toFixed(2)),updatedAt:new Date()}},{returnDocument:"after"});
- if(!saved)throw new HttpError(404,"找不到这笔账单。");return NextResponse.json(serializeDoc(saved));
+ if(!saved)throw new HttpError(404,"找不到这笔账单。");queueMilestones(ctx);return NextResponse.json(serializeDoc(saved));
 });
 export const DELETE=privateRoute(async(request,ctx)=>{
  await rateLimit(ctx.db,ctx.userId,"delete-transaction",120);const result=await ownedCollection(ctx.db,ctx.userId,"transactions").deleteOne({_id:objectId(request)});
- if(!result.deletedCount)throw new HttpError(404,"找不到这笔账单。");return NextResponse.json({ok:true});
+ if(!result.deletedCount)throw new HttpError(404,"找不到这笔账单。");queueMilestones(ctx);return NextResponse.json({ok:true});
 });

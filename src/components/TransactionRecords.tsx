@@ -95,7 +95,7 @@ export function TransactionRecords({ active, categories, paymentMethods, revisio
   if (!active) return null;
   const activeFilters = Number(!!category) + Number(!!paymentMethod) + Number(range !== "year");
   return <section className="panel records-panel" aria-label="流水">
-    <div className="panel-head"><span>流水</span><span>{ranges[range]} · {loading && !visiblePage ? "搜索中…" : `${records.length}${cursor ? "+" : ""} 条`}</span></div>
+    <div className="mp-section-head"><h2>流水</h2><span>{ranges[range]} · {loading && !visiblePage ? "搜索中…" : `${records.length}${cursor ? "+" : ""} 条`}</span></div>
     <div className="records-search-bar">
       <input className="input" type="search" aria-label="搜索备注或商户" placeholder="搜索备注或商户" maxLength={100} value={text} onChange={event => setText(event.target.value)} />
       <button className="text-button" type="button" aria-expanded={expanded} aria-controls="record-filters" onClick={() => setExpanded(!expanded)}>筛选{activeFilters ? ` · ${activeFilters}` : ""}</button>
